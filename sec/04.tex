@@ -1,0 +1,565 @@
+
+\section{Relational Database Access}
+\label{part:rdbms-access}
+
+Programmatic access to relational databases (RDBMS) relies on standardized protocols and APIs that let applications connect, query, and manipulate the data. This part introduces the connection standards and then works through their practical use with Python, a language widely adopted in data science and ETL.
+
+\subsection{Connection Architecture}
+\label{sec:connection-architecture}
+
+\subsubsection{Client-Server Model}
+\label{subsec:client-server-model}
+
+Interaction with an RDBMS follows the client-server paradigm: the client application opens a network connection to the database server, sends SQL commands, and receives the results. This separation lets several clients access the same data concurrently, while the server handles transactions, locking, and query optimization.
+
+The workflow has three phases:
+
+\begin{enumerate}
+    \item \textbf{Connection}: locate the server (hostname, port), open the communication channel, authenticate with user credentials, and select the database.
+    \item \textbf{Querying}: send SQL commands, whether read queries (SELECT), modifications (INSERT, UPDATE, DELETE), schema definitions (CREATE, ALTER), or stored procedures.
+    \item \textbf{Result processing}: receive the result set, scan it row by row, and read the values and column metadata.
+\end{enumerate}
+
+\subsubsection{Connection Standards}
+\label{subsec:connection-standards}
+
+Uniform access to heterogeneous RDBMS rests on standards that define common interfaces, insulating the application from the peculiarities of any single database:
+
+\begin{itemize}
+    \item \textbf{ODBC} (Open DataBase Connectivity): a cross-platform standard defined by Microsoft and adopted universally. It provides a C API for access to any tabular data source. It ships natively on Windows; on Linux it comes through implementations such as unixODBC and iODBC.
+    \item \textbf{JDBC} (Java DataBase Connectivity): a Java standard (part of Java SE) that defines interfaces for database connection. Each DBMS ships a JDBC driver that implements those interfaces.
+    \item \textbf{OLE DB}: a Microsoft standard built on COM (Component Object Model), designed to reach tabular, hierarchical, and multidimensional data. It is more powerful than ODBC but confined to the Windows ecosystem.
+    \item \textbf{ADO.NET}: a .NET framework that abstracts data access through specific providers. It supports a connected mode (DataReader) and a disconnected mode (DataSet).
+\end{itemize}
+
+\subsection{ODBC}
+\label{sec:odbc}
+
+ODBC (Open DataBase Connectivity) offers a uniform interface that hides the differences between DBMS. An application written against ODBC can connect to SQL Server, Oracle, MySQL, PostgreSQL, or any other source simply by swapping the driver, with no change to the code.
+
+\subsubsection{ODBC Architecture}
+\label{subsec:odbc-architecture}
+
+The ODBC architecture has three components:
+
+\begin{itemize}
+    \item \textbf{Application}: the program that uses the ODBC API to reach the data.
+    \item \textbf{Driver Manager}: a system library that receives the application's calls, dynamically loads the appropriate driver, and routes the requests.
+    \item \textbf{ODBC driver}: a DBMS-specific module that translates the generic ODBC calls into the native protocol of the target database.
+\end{itemize}
+
+\begin{notebox}
+\textbf{DSN configuration.}
+Data sources are registered with the system as a \textbf{DSN} (Data Source Name), which binds a logical name to the connection parameters. On Windows this uses the ODBC Data Source Administrator; on Linux it uses the files \texttt{/etc/odbc.ini} (system DSN) and \texttt{\textasciitilde/.odbc.ini} (user DSN), with the drivers declared in \texttt{odbcinst.ini}.
+\end{notebox}
+
+\subsection{Python DB-API}
+\label{sec:python-dbapi}
+
+Python defines a standard specification for its database-access modules, called \textbf{DB-API 2.0} (PEP 249). This specification guarantees uniformity: whatever the DBMS or the chosen module, the code keeps the same structure and calls the same methods.
+
+The portability reaches many databases: SQL Server, Oracle, MySQL, PostgreSQL, SQLite, IBM DB2, and NoSQL databases such as MongoDB and Cassandra through compatible modules.
+
+\subsubsection{Available Modules}
+\label{subsec:dbapi-modules}
+
+Each DBMS has several modules that conform to the specification. For MySQL, for instance:
+
+\begin{itemize}
+    \item \texttt{MySQLdb}: a C binding for the native MySQL library
+    \item \texttt{PyMySQL}: a pure-Python implementation
+    \item \texttt{mysql-connector-python}: the official Oracle driver
+    \item \texttt{pyodbc}: access through an ODBC driver
+\end{itemize}
+
+The choice depends on performance requirements, dependencies, and portability. For SQL Server, \texttt{pyodbc} is the standard choice in a data science setting.
+
+\subsubsection{Standard Interface}
+\label{subsec:dbapi-interface}
+
+The DB-API specification defines objects and methods common to every conforming module:
+
+{
+\scriptsize
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Function/Method} & \textbf{Description} \\
+\midrule
+\texttt{connect(params)} & Create and return a Connection object \\
+\texttt{conn.close()} & Close the connection and release its resources \\
+\texttt{conn.commit()} & Commit the current transaction \\
+\texttt{conn.rollback()} & Roll back the current transaction \\
+\texttt{conn.cursor()} & Create a Cursor object to run queries \\
+\texttt{cursor.execute(sql, [params])} & Run a SQL query \\
+\texttt{cursor.executemany(sql, seq)} & Run the query for each item of the sequence \\
+\texttt{cursor.fetchone()} & Return the next row of the result set \\
+\texttt{cursor.fetchmany(n)} & Return the next $n$ rows \\
+\texttt{cursor.fetchall()} & Return all remaining rows \\
+\texttt{cursor.description} & Column metadata of the result set \\
+\texttt{cursor.rowcount} & Number of rows affected by the last operation \\
+\texttt{cursor.close()} & Close the cursor \\
+\bottomrule
+\end{tabular}
+\end{center}
+}
+
+\subsection{Programming with pyodbc}
+\label{sec:pyodbc-programming}
+
+The \texttt{pyodbc} module implements the DB-API 2.0 specification using ODBC as its transport protocol. It connects Python applications to any data source that has an ODBC driver.
+
+\subsubsection{Workflow}
+\label{subsec:pyodbc-workflow}
+
+The standard data-access pattern runs in five steps:
+
+\begin{enumerate}
+    \item Import the module
+    \item Open the connection to the database
+    \item Run SQL queries through a cursor
+    \item Process the results
+    \item Close the cursor and the connection
+\end{enumerate}
+
+\subsubsection{Connecting to the Database}
+\label{subsec:pyodbc-connection}
+
+The connection needs a \textbf{connection string} that names the driver, server, database, and credentials:
+
+\begin{lstlisting}[language=Python, basicstyle=\ttfamily\scriptsize]
+import pyodbc
+
+conn = pyodbc.connect(
+    'DRIVER={ODBC Driver 17 for SQL Server};'
+    'SERVER=tcp:lds.di.unipi.it;'
+    'DATABASE=Foodmart;'
+    'UID=student;'
+    'PWD=password'
+)
+cursor = conn.cursor()
+\end{lstlisting}
+
+The general form of the connection string is:
+
+\begin{center}
+\texttt{DRIVER=\{name\}; SERVER=host; DATABASE=db; UID=user; PWD=pwd}
+\end{center}
+
+For connections that use integrated Windows authentication, \texttt{UID} and \texttt{PWD} are omitted and \texttt{Trusted\_Connection=yes} is added instead.
+
+\subsubsection{Running Queries}
+\label{subsec:pyodbc-queries}
+
+SQL queries run through the cursor's \texttt{execute()} method:
+
+\begin{lstlisting}[language=Python, basicstyle=\ttfamily\scriptsize]
+# Read query
+cursor.execute("SELECT name, age FROM students WHERE age > 20")
+
+# Modification query (requires explicit commit)
+cursor.execute("UPDATE students SET age = age + 1 WHERE id = 42")
+conn.commit()
+\end{lstlisting}
+
+Modification operations (INSERT, UPDATE, DELETE) do not persist until \texttt{commit()} is called. On error, \texttt{rollback()} discards the pending changes.
+
+\subsubsection{Processing the Results}
+\label{subsec:pyodbc-results}
+
+Two approaches process the result set.
+
+\textbf{Full fetch} loads every row into memory as a list:
+\begin{lstlisting}[language=Python, basicstyle=\ttfamily\scriptsize]
+cursor.execute("SELECT name, department FROM employees")
+rows = cursor.fetchall()
+for row in rows:
+    print(row[0], row[1])        # access by positional index
+    print(row.name, row.department)  # access by column name
+\end{lstlisting}
+
+\textbf{Cursor iteration} stays memory-efficient for large result sets:
+\begin{lstlisting}[language=Python, basicstyle=\ttfamily\scriptsize]
+cursor.execute("SELECT name, department FROM employees")
+for row in cursor:
+    print(row.name, row.department)
+\end{lstlisting}
+
+Iteration is preferable when the result set may not fit in memory, or when processing should begin before every row has arrived.
+
+\subsubsection{Modification Operations}
+\label{subsec:pyodbc-modifications}
+
+INSERT, UPDATE, and DELETE report the number of rows they touched through the \texttt{rowcount} attribute:
+
+\begin{lstlisting}[language=Python, basicstyle=\ttfamily\scriptsize]
+cursor.execute("DELETE FROM products WHERE discontinued = 1")
+print(f"Rows deleted: {cursor.rowcount}")
+conn.commit()
+\end{lstlisting}
+
+\subsubsection{Resource Management}
+\label{subsec:resource-management}
+
+Releasing resources once they are no longer needed is essential. The traditional approach requires explicit calls:
+
+\begin{lstlisting}[language=Python, basicstyle=\ttfamily\scriptsize]
+cursor.close()
+conn.close()
+\end{lstlisting}
+
+The recommended approach uses the \textbf{context manager} (the \texttt{with} construct), which guarantees closure even when an exception is raised:
+
+\begin{lstlisting}[language=Python, basicstyle=\ttfamily\scriptsize]
+with pyodbc.connect(connection_string) as conn:
+    with conn.cursor() as cursor:
+        cursor.execute("SELECT * FROM products")
+        for row in cursor:
+            print(row.product_name)
+# Connection and cursor closed automatically
+\end{lstlisting}
+
+\subsection{Prepared Statements and Security}
+\label{sec:prepared-statements}
+
+\subsubsection{Parameterized Queries}
+\label{subsec:parameterized-queries}
+
+When many queries share an identical structure but differ in their parameters, computing an execution plan for each one wastes work. \textbf{Prepared statements} solve this by using placeholders for the parameters.
+
+\begin{examplebox}
+\textbf{Inefficient approach}: a full query for every insertion:
+\begin{lstlisting}[language=SQL, basicstyle=\ttfamily\tiny]
+INSERT INTO employees (id, name) VALUES (1, 'Luigi Rossi')
+INSERT INTO employees (id, name) VALUES (2, 'Mario Bianchi')
+-- The DBMS compiles N separate execution plans
+\end{lstlisting}
+\end{examplebox}
+
+With prepared statements, the plan is compiled once and reused:
+
+\begin{lstlisting}[language=Python, basicstyle=\ttfamily\scriptsize]
+sql = "INSERT INTO employees (id, name) VALUES (?, ?)"
+
+with open('employees.csv') as f:
+    for i, line in enumerate(f):
+        cursor.execute(sql, (i, line.strip()))
+
+conn.commit()
+\end{lstlisting}
+
+For bulk insertions, \texttt{executemany()} is more efficient still:
+
+\begin{lstlisting}[language=Python, basicstyle=\ttfamily\scriptsize]
+data = [(1, 'Luigi'), (2, 'Mario'), (3, 'Anna')]
+cursor.executemany("INSERT INTO employees (id, name) VALUES (?, ?)", data)
+conn.commit()
+\end{lstlisting}
+
+\subsubsection{Preventing SQL Injection}
+\label{subsec:sql-injection}
+
+Prepared statements are essential for \textbf{security}. Building a query by concatenating strings is vulnerable to SQL injection:
+
+\begin{lstlisting}[language=Python, basicstyle=\ttfamily\scriptsize]
+# DANGEROUS: vulnerable to SQL injection
+user_input = "'; DROP TABLE users; --"
+query = f"SELECT * FROM users WHERE name = '{user_input}'"
+cursor.execute(query)  # Executes: SELECT * FROM users WHERE name = ''; DROP TABLE users; --'
+\end{lstlisting}
+
+Placeholders neutralize malicious input by treating it as data rather than SQL code:
+
+\begin{lstlisting}[language=Python, basicstyle=\ttfamily\scriptsize]
+# SAFE: the input is escaped automatically
+cursor.execute("SELECT * FROM users WHERE name = ?", (user_input,))
+\end{lstlisting}
+
+\begin{notebox}
+\textbf{Golden rule.}
+Never concatenate user input directly into a SQL query. Always use placeholders and pass the values as separate parameters.
+\end{notebox}
+
+\subsection{Data Type Mapping}
+\label{sec:type-mapping}
+
+Conversion between Python types and SQL/ODBC types happens automatically, following rules the driver defines.
+
+\subsubsection{From Python to SQL}
+\label{subsec:python-to-sql}
+
+{
+\scriptsize
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Python type} & \textbf{Description} & \textbf{ODBC/SQL type} \\
+\midrule
+\texttt{None} & null value & NULL \\
+\texttt{str} & Unicode string & VARCHAR / NVARCHAR \\
+\texttt{bytes} & binary data & VARBINARY \\
+\texttt{bool} & boolean & BIT \\
+\texttt{int} & arbitrary-size integer & BIGINT \\
+\texttt{float} & 64-bit floating point & DOUBLE / FLOAT \\
+\texttt{decimal.Decimal} & arbitrary-precision decimal & DECIMAL / NUMERIC \\
+\texttt{datetime.date} & date & DATE \\
+\texttt{datetime.time} & time & TIME \\
+\texttt{datetime.datetime} & timestamp & DATETIME / TIMESTAMP \\
+\bottomrule
+\end{tabular}
+\end{center}
+}
+
+\subsubsection{From SQL to Python}
+\label{subsec:sql-to-python}
+
+{
+\scriptsize
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{SQL type} & \textbf{Variants} & \textbf{Python type} \\
+\midrule
+NULL & --- & \texttt{None} \\
+Character & CHAR, VARCHAR, TEXT & \texttt{str} \\
+Unicode & NCHAR, NVARCHAR, NTEXT & \texttt{str} \\
+Binary & BINARY, VARBINARY, BLOB & \texttt{bytes} \\
+Boolean & BIT & \texttt{bool} \\
+Integer & TINYINT, SMALLINT, INT, BIGINT & \texttt{int} \\
+Floating & REAL, FLOAT, DOUBLE & \texttt{float} \\
+Decimal & DECIMAL, NUMERIC, MONEY & \texttt{decimal.Decimal} \\
+Date & DATE & \texttt{datetime.date} \\
+Time & TIME & \texttt{datetime.time} \\
+Timestamp & DATETIME, TIMESTAMP & \texttt{datetime.datetime} \\
+\bottomrule
+\end{tabular}
+\end{center}
+}
+
+\subsection{Metadata Access}
+\label{sec:metadata-access}
+
+Beyond the data itself, querying the database's structure is often necessary: the list of tables, the column schema, the primary keys. pyodbc provides dedicated methods for this.
+
+\subsubsection{Result Set Metadata}
+\label{subsec:resultset-metadata}
+
+The \texttt{cursor.description} attribute returns a tuple with information about each column of the result set:
+
+\begin{lstlisting}[language=Python, basicstyle=\ttfamily\scriptsize]
+cursor.execute("SELECT product_id, name, price FROM products")
+for col in cursor.description:
+    name, type_code, display_size, internal_size, precision, scale, nullable = col
+    print(f"{name}: type={type_code}, nullable={nullable}")
+\end{lstlisting}
+
+\subsubsection{Table Catalog}
+\label{subsec:table-catalog}
+
+The \texttt{tables()} method enumerates the database's tables:
+
+\begin{lstlisting}[language=Python, basicstyle=\ttfamily\scriptsize]
+# All user tables
+for t in cursor.tables(tableType='TABLE'):
+    print(f"{t.table_schem}.{t.table_name}")
+
+# Filter by pattern (SQL wildcard)
+for t in cursor.tables(table='sales%'):
+    print(t.table_name)  # Tables starting with 'sales'
+\end{lstlisting}
+
+Each returned row holds: \texttt{table\_cat} (catalog), \texttt{table\_schem} (schema), \texttt{table\_name}, and \texttt{table\_type} (TABLE, VIEW, SYSTEM TABLE).
+
+\subsubsection{Column Schema}
+\label{subsec:column-schema}
+
+The \texttt{columns()} method returns detailed information about a table's columns:
+
+\begin{lstlisting}[language=Python, basicstyle=\ttfamily\scriptsize]
+for col in cursor.columns(table='products'):
+    print(f"{col.column_name}: {col.type_name}({col.column_size}), "
+          f"nullable={col.nullable}")
+\end{lstlisting}
+
+Available attributes include: \texttt{column\_name}, \texttt{data\_type} (numeric code), \texttt{type\_name} (readable name), \texttt{column\_size}, \texttt{decimal\_digits}, \texttt{nullable}, \texttt{ordinal\_position}, \texttt{column\_def} (default), and others.
+
+
+\subsection{Project Setup: Python Environment}
+\label{sec:python-setup}
+
+The following material is a practical reference for the exam project: a project layout, the dependencies, a configuration template, and reusable patterns for reading, cleaning, and enriching data with the DB-API tools introduced above.
+
+\begin{notebox}
+\textbf{Requirements:} Python 3.8+, pip, a terminal. \\
+\textbf{Recommended IDEs:} VS Code with the Python extension, PyCharm, Jupyter Notebook.
+\end{notebox}
+
+\subsubsection{Project Structure and Dependencies}
+\label{subsec:project-structure}
+
+\begin{lstlisting}[language=bash]
+project/
+|-- data/
+|   |-- raw/              # Original data (tracks.json, artists.xml)
+|   |-- processed/        # Cleaned data
+|   |-- enriched/         # Data enriched from API
+|   |-- warehouse/        # CSV ready for DW loading
+|-- cache/                # API call cache
+|-- src/
+|   |-- cleaning.py       # Cleaning functions
+|   |-- enrichment.py     # Enrichment via API
+|   |-- warehouse_prep.py # CSV preparation for DW
+|   |-- db_loader.py      # Loading into SQL Server
+|-- config.py             # Configuration and credentials
+|-- requirements.txt
+\end{lstlisting}
+
+\textbf{requirements.txt:}
+\begin{lstlisting}
+requests>=2.28.0
+pyodbc>=4.0.35
+musicbrainzngs>=0.7.1
+\end{lstlisting}
+
+\textbf{Installation:}
+\begin{lstlisting}[language=bash]
+python -m venv venv
+source venv/bin/activate    # Linux/Mac
+venv\Scripts\activate       # Windows
+pip install -r requirements.txt
+\end{lstlisting}
+
+\subsubsection{Configuration Template}
+\label{subsec:config-template}
+
+\begin{lstlisting}[language=Python]
+# config.py
+DB_CONFIG = {
+    'server': 'your_server.database.windows.net',
+    'database': 'Group_XX_DB',
+    'username': 'your_username',
+    'password': 'your_password',
+    'driver': '{ODBC Driver 17 for SQL Server}'
+}
+
+API_CONFIG = {
+    'musicbrainz_app': 'MyApp/1.0 (contact@email.com)',
+    'rate_limit_delay': 1.0  # seconds between calls
+}
+
+PATHS = {
+    'raw_tracks': 'data/raw/tracks.json',
+    'raw_artists': 'data/raw/artists.xml',
+    'cache_dir': 'cache/',
+    'output_dir': 'data/warehouse/'
+}
+\end{lstlisting}
+
+\subsubsection{Data Reading Patterns}
+\label{subsec:data-reading-patterns}
+
+\textbf{JSON:}
+\begin{lstlisting}[language=Python]
+import json
+
+def load_json(filepath):
+    with open(filepath, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    # Handles optional root key
+    if isinstance(data, dict) and len(data) == 1:
+        return list(data.values())[0]
+    return data
+\end{lstlisting}
+
+\textbf{XML:}
+\begin{lstlisting}[language=Python]
+import xml.etree.ElementTree as ET
+
+def load_xml(filepath, record_tag='record'):
+    tree = ET.parse(filepath)
+    root = tree.getroot()
+    records = []
+    for elem in root.findall(f'.//{record_tag}'):
+        record = {child.tag: child.text for child in elem}
+        records.append(record)
+    return records
+\end{lstlisting}
+
+\subsubsection{Data Cleaning Patterns}
+\label{subsec:data-cleaning-patterns}
+
+\begin{lstlisting}[language=Python]
+import re
+from datetime import datetime
+
+def clean_string(value, default=''):
+    return str(value).strip() if value else default
+
+def clean_numeric(value, default=None, as_type=float):
+    if value is None or str(value).strip() == '':
+        return default
+    try:
+        return as_type(value)
+    except (ValueError, TypeError):
+        return default
+
+def clean_date(date_str, fmt='%Y-%m-%d'):
+    """Normalize dates. Handles partial formats (year only)."""
+    if not date_str:
+        return None
+    date_str = str(date_str).strip()
+    # Try common formats
+    for f in ['%Y-%m-%d', '%Y/%m/%d', '%d-%m-%Y', '%Y']:
+        try:
+            return datetime.strptime(date_str, f).strftime('%Y-%m-%d')
+        except ValueError:
+            continue
+    return None
+\end{lstlisting}
+
+\subsubsection{Cached API Pattern}
+\label{subsec:api-cache-pattern}
+
+\begin{lstlisting}[language=Python]
+import requests
+import json
+import os
+import hashlib
+import time
+
+class CachedAPIClient:
+    def __init__(self, cache_dir, rate_limit=1.0):
+        self.cache_dir = cache_dir
+        self.rate_limit = rate_limit
+        self.last_call = 0
+        os.makedirs(cache_dir, exist_ok=True)
+
+    def _cache_path(self, key):
+        h = hashlib.md5(key.encode()).hexdigest()
+        return os.path.join(self.cache_dir, f"{h}.json")
+
+    def get(self, url, params=None):
+        cache_key = url + str(params)
+        path = self._cache_path(cache_key)
+
+        # Cache hit
+        if os.path.exists(path):
+            with open(path, 'r') as f:
+                return json.load(f)
+
+        # Rate limiting
+        elapsed = time.time() - self.last_call
+        if elapsed < self.rate_limit:
+            time.sleep(self.rate_limit - elapsed)
+
+        # API call
+        response = requests.get(url, params=params)
+        self.last_call = time.time()
+
+        if response.status_code == 200:
+            data = response.json()
+            with open(path, 'w') as f:
+                json.dump(data, f)
+            return data
+        return None
+\end{lstlisting}

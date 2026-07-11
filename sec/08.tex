@@ -1,0 +1,883 @@
+
+\section{SQL Server Analysis Services}
+\label{part:ssas}
+
+SQL Server Analysis Services (SSAS) is the OLAP engine of the Microsoft suite, built to support multidimensional analysis over large data volumes. This part covers the system architecture, the two available modelling paradigms, the development workflow, and the MDX language used to query the cubes.
+
+\subsection{SSAS Architecture}
+\label{sec:ssas-architecture}
+
+SSAS runs as a server independent of the SQL Server Database Engine. It unifies OLAP Server and Data Mining Server functionality in a single environment, and connects to heterogeneous sources through ODBC, OLE DB, flat files, and cloud services.
+
+\subsubsection{Modelling Paradigms}
+\label{subsec:ssas-paradigms}
+
+SSAS offers two distinct modelling paradigms, each optimised for a specific class of scenarios:
+
+\begin{notebox}
+\textbf{Multidimensional model}: implements the classic OLAP cube structure. It requires the explicit definition of Data Source, Data Source View, Dimensions, and Cubes. Query language: MDX. Storage: MOLAP, ROLAP, or HOLAP. Best suited to complex hierarchies, sophisticated calculations, and compatibility with traditional OLAP clients.
+
+\textbf{Tabular model}: relies on the in-memory VertiPaq engine with advanced columnar compression. Query and calculation language: DAX (Data Analysis Expressions). Its advantages are shorter development times, native integration with Excel and Power BI, and strong performance on medium-to-large volumes. Best suited to self-service BI and agile scenarios.
+\end{notebox}
+
+The choice between the two approaches depends on:
+\begin{itemize}
+    \item \textbf{Hierarchy complexity}: the multidimensional model handles parent-child, ragged, and many-to-many hierarchies better.
+    \item \textbf{Data volume}: the tabular model scales better thanks to VertiPaq compression.
+    \item \textbf{Client tools}: the tabular model integrates natively with modern Power BI and Excel.
+    \item \textbf{Team skills}: DAX has a more accessible learning curve than MDX.
+\end{itemize}
+
+\subsubsection{BI Semantic Model}
+\label{subsec:bi-semantic-model}
+
+SSAS exposes a \textbf{unified semantic model} reachable through the XMLA (XML for Analysis) protocol. Clients connect through this standard interface regardless of the underlying technology.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[
+    node distance=0.3cm,
+    client/.style={rectangle, draw=accent, fill=white, minimum width=0.9cm, minimum height=0.4cm, align=center, font=\tiny},
+    layer/.style={rectangle, draw=secondary, fill=codebg, minimum width=3.8cm, minimum height=0.35cm, align=center, font=\tiny},
+    source/.style={rectangle, draw=accent, fill=white, minimum width=0.7cm, minimum height=0.4cm, align=center, font=\tiny},
+    scale=0.85
+]
+\node[client] (app) {Apps};
+\node[client, right=0.15cm of app] (rs) {SSRS};
+\node[client, right=0.15cm of rs] (xl) {Excel};
+\node[client, right=0.15cm of xl] (pp) {Power BI};
+
+\node[layer, below=0.35cm of rs] (xmla) {XMLA Protocol};
+
+\node[draw=secondary, fill=rosaantico, minimum width=4.2cm, minimum height=1.5cm, below=0.3cm of xmla] (bism) {};
+\node[font=\tiny\bfseries, color=secondary] at ([yshift=0.6cm]bism.center) {BI Semantic Model};
+
+\node[layer, minimum width=1.6cm, fill=white, font=\tiny] at ([xshift=-0.9cm, yshift=0.15cm]bism.center) (multi) {Multidim.};
+\node[layer, minimum width=1.6cm, fill=white, font=\tiny] at ([xshift=0.9cm, yshift=0.15cm]bism.center) (tab) {Tabular};
+\node[layer, minimum width=1.6cm, fill=white, font=\tiny] at ([xshift=-0.9cm, yshift=-0.2cm]bism.center) (mdx) {MDX};
+\node[layer, minimum width=1.6cm, fill=white, font=\tiny] at ([xshift=0.9cm, yshift=-0.2cm]bism.center) (dax) {DAX};
+\node[layer, minimum width=0.75cm, fill=white, font=\tiny] at ([xshift=-1.3cm, yshift=-0.55cm]bism.center) (rolap) {ROLAP};
+\node[layer, minimum width=0.75cm, fill=white, font=\tiny] at ([xshift=-0.4cm, yshift=-0.55cm]bism.center) (molap) {MOLAP};
+\node[layer, minimum width=0.75cm, fill=white, font=\tiny] at ([xshift=0.5cm, yshift=-0.55cm]bism.center) (vp) {VertiPaq};
+\node[layer, minimum width=0.75cm, fill=white, font=\tiny] at ([xshift=1.4cm, yshift=-0.55cm]bism.center) (dq) {DirectQ};
+
+\node[source, below=0.4cm of bism] (db) {DW};
+\node[source, right=0.2cm of db] (lob) {LOB};
+\node[source, right=0.2cm of lob] (files) {Files};
+\node[source, right=0.2cm of files] (cloud) {Cloud};
+
+\draw[-{Stealth[length=1.5mm]}, accent, thin] (app) -- (xmla);
+\draw[-{Stealth[length=1.5mm]}, accent, thin] (rs) -- (xmla);
+\draw[-{Stealth[length=1.5mm]}, accent, thin] (xl) -- (xmla);
+\draw[-{Stealth[length=1.5mm]}, accent, thin] (pp) -- (xmla);
+\draw[-{Stealth[length=1.5mm]}, accent, thin] (xmla) -- (bism);
+\draw[-{Stealth[length=1.5mm]}, accent, thin] (db) -- (bism);
+\draw[-{Stealth[length=1.5mm]}, accent, thin] (lob) -- (bism);
+\draw[-{Stealth[length=1.5mm]}, accent, thin] (files) -- (bism);
+\draw[-{Stealth[length=1.5mm]}, accent, thin] (cloud) -- (bism);
+\end{tikzpicture}
+\caption{SSAS architecture: the BI Semantic Model abstracts the storage details and exposes a uniform interface to clients through XMLA.}
+\label{fig:ssas-architecture}
+\end{figure}
+
+The semantic model supports:
+\begin{itemize}
+    \item Dimensions with multiple hierarchies and descriptive attributes
+    \item Aggregate measures with calculation formulas
+    \item Calculated metrics (calculated members) and calculated sets (named sets)
+    \item KPIs with targets, thresholds, and visual indicators
+    \item Interactive actions: URL, drill-through, report launch
+\end{itemize}
+
+\subsection{Developing Multidimensional Projects}
+\label{sec:ssas-development}
+
+\subsubsection{Development Environment}
+\label{subsec:ssas-dev-environment}
+
+The development environment for SSAS is \textbf{SQL Server Data Tools (SSDT)}, integrated into Visual Studio. To create a multidimensional project: \texttt{File} $\rightarrow$ \texttt{New} $\rightarrow$ \texttt{Project} $\rightarrow$ \texttt{Analysis Services Multidimensional and Data Mining Project}.
+
+\begin{notebox}
+\textbf{Naming convention.}
+In shared environments (labs, teams), prefix the project name with your own identifier in the form \texttt{<account>\_<project\_name>} to avoid conflicts during deployment on the same SSAS server.
+\end{notebox}
+
+\subsubsection{Project Structure}
+\label{subsec:ssas-project-structure}
+
+An SSAS Multidimensional project is organised into components with specific responsibilities.
+
+\textbf{Data Source}: defines the connections to the source databases (typically the data warehouse). Its parameters are the provider (OLE DB is recommended for compatibility), the connection string, and the impersonation credentials. For lab environments, use ``Use the service account'' as the impersonation option.
+
+\textbf{Data Source View (DSV)}: a logical view of the source tables. It allows one to:
+\begin{itemize}
+    \item Rename tables and columns without altering the database
+    \item Define logical relationships absent from the physical DB
+    \item Create calculated columns (Named Calculations)
+    \item Add named queries (Named Queries) as virtual tables
+\end{itemize}
+The DSV works in disconnected mode, storing the metadata locally.
+
+\textbf{Dimensions}: definitions of the analytical dimensions. For each dimension one specifies:
+\begin{itemize}
+    \item The source table from the DSV
+    \item The key attribute (surrogate key)
+    \item The name attribute (descriptive column shown to the user)
+    \item The type: Standard or Time (for temporal dimensions with built-in intelligence)
+\end{itemize}
+
+\textbf{Cubes}: the aggregation of dimensions, measures, and relationships. A cube defines:
+\begin{itemize}
+    \item Measure groups (groups of measures from the same fact table)
+    \item Dimension usage (how dimensions connect to the measure groups)
+    \item Calculated members and named sets
+    \item KPIs, actions, perspectives
+\end{itemize}
+
+\subsubsection{Dimension Attribute Properties}
+\label{subsec:attribute-properties}
+
+Dimension attributes expose configurable properties in the Properties panel:
+
+\begin{itemize}
+    \item \textbf{AttributeHierarchyVisible}: when True, the attribute appears as a navigable flat hierarchy (default: True for every attribute).
+    \item \textbf{OrderBy}: the sort criterion for members (Key, Name, AttributeKey, AttributeName).
+    \item \textbf{DiscretizationMethod}: for continuous numeric attributes, enables automatic discretisation into buckets (None, Automatic, EqualAreas, Clusters).
+    \item \textbf{Type}: the semantic type of the attribute. Keep ``Regular'' unless a specific need arises (for example ``Country'' to enable geographic features).
+    \item \textbf{Usage}: the role of the attribute: Key (primary key), Regular (standard attribute), Parent (for parent-child hierarchies).
+\end{itemize}
+
+User hierarchies are defined in the \textbf{Dimension Structure} panel by dragging attributes into the Hierarchies area to build ordered levels (for example Year $\rightarrow$ Quarter $\rightarrow$ Month).
+
+\subsubsection{The Build-Deploy-Process Cycle}
+\label{subsec:build-deploy-process}
+
+The SSAS development workflow has three distinct phases.
+
+\textbf{Build}: a syntactic check of the project run locally. It validates the XML definitions without contacting the server. Typical errors are missing references and inconsistent relationships.
+
+\textbf{Deploy}: transfers the compiled project to the target SSAS server. It is configured under \texttt{Project Properties} $\rightarrow$ \texttt{Deployment}:
+\begin{itemize}
+    \item \textbf{Server}: the URL of the SSAS server (for example \texttt{localhost} or \texttt{server.domain.com})
+    \item \textbf{Database}: the name of the target database
+    \item \textbf{Processing Option}: Default (process if needed), Full, DoNotProcess
+\end{itemize}
+After the deploy, structural changes (new dimensions, attributes, hierarchies) become visible, but the data may not yet be refreshed.
+
+\textbf{Process}: populates the cube by reading the data from the sources. It computes aggregations, builds indexes, and refreshes the cache. The available modes are:
+\begin{itemize}
+    \item \textit{Process Full}: fully rebuilds the object
+    \item \textit{Process Update}: refreshes with the changed data (dimensions only)
+    \item \textit{Process Index}: rebuilds the indexes only
+    \item \textit{Process Data}: loads the data without computing aggregations
+\end{itemize}
+
+\subsection{OLAP Storage in SSAS}
+\label{sec:ssas-storage}
+
+SSAS supports the three standard OLAP architectures (see Section~\ref{sec:olap-architectures} for the general concepts), with specific configuration options.
+
+\subsubsection{Storage Modes}
+\label{subsec:ssas-storage-modes}
+
+\textbf{MOLAP}: the data is copied from the data warehouse into proprietary multidimensional structures optimised for OLAP queries. Performance is excellent, but there is an update latency because processing is required.
+
+\textbf{ROLAP}: SSAS generates SQL queries against the data warehouse on every request. The data is always current, but performance depends on the underlying RDBMS.
+
+\textbf{HOLAP}: pre-computed aggregates sit in MOLAP, detail data stays in ROLAP. It balances performance against data freshness.
+
+Configuration happens at the partition level (a partition of a measure group) through the \textbf{Storage Mode} property. The available options are:
+
+\begin{itemize}
+    \item \textbf{MOLAP}: manual or scheduled processing
+    \item \textbf{Scheduled MOLAP}: automatic rebuild at defined intervals
+    \item \textbf{Automatic MOLAP}: refresh triggered by changes to the source data
+    \item \textbf{Low-latency MOLAP}: near real-time update within a configurable window
+    \item \textbf{Real-time HOLAP}: MOLAP cache with ROLAP fallback for recent data
+    \item \textbf{Real-time ROLAP}: direct access to the data warehouse, no cache
+\end{itemize}
+
+\subsubsection{Proactive Caching}
+\label{subsec:proactive-caching}
+
+\textbf{Proactive caching} automates the management of the MOLAP cache in response to changes in the source data. The mechanism proceeds as follows:
+
+\begin{enumerate}
+    \item The RDBMS notifies changes through SQL Server Notification Services or polling
+    \item SSAS invalidates the affected cache
+    \item After a \textbf{silence interval} (a waiting period that lets changes accumulate), the rebuild begins
+    \item During the rebuild, queries are served from the existing (stale) cache or in ROLAP mode
+    \item The \textbf{latency} sets the maximum tolerated time between a change and its availability in the cube
+\end{enumerate}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[
+    node distance=0.4cm,
+    box/.style={rectangle, draw=secondary, fill=codebg, minimum width=1cm, minimum height=0.5cm, align=center, font=\tiny},
+    arrow/.style={-{Stealth[length=1.5mm]}, thick, accent},
+    scale=0.85
+]
+\node[box, fill=blue!20] (rdbms) {RDBMS};
+\node[box, fill=green!20, right=1cm of rdbms, minimum width=0.8cm, minimum height=0.8cm] (udm) {UDM};
+\node[box, fill=blue!30, above right=0.2cm and 0.5cm of udm, minimum width=0.8cm] (molap) {MOLAP\\Cache};
+\node[box, right=0.8cm of udm, fill=white] (client) {Client};
+
+\draw[arrow] (rdbms) -- node[above, font=\tiny] {Events} (udm);
+\draw[arrow] (udm) -- (molap);
+\draw[arrow, dashed] (rdbms) -- ++(0,-0.5) -| node[below, font=\tiny, pos=0.25] {Rebuild} (molap);
+\draw[arrow] (udm) -- node[above, font=\tiny] {MDX} (client);
+\end{tikzpicture}
+\caption{Proactive caching: the RDBMS notifies the changes, and SSAS invalidates and rebuilds the MOLAP cache automatically.}
+\label{fig:proactive-caching}
+\end{figure}
+
+\subsection{Advanced Features}
+\label{sec:ssas-advanced}
+
+\subsubsection{KPIs (Key Performance Indicators)}
+\label{subsec:kpi}
+
+A \textbf{KPI} combines a metric with a target value and evaluation thresholds. Its components are:
+\begin{itemize}
+    \item \textbf{Value}: the measure or MDX expression to monitor
+    \item \textbf{Goal}: the target value (constant or calculated)
+    \item \textbf{Status}: an expression that determines the state (for example -1, 0, 1 for red/yellow/green)
+    \item \textbf{Trend}: an expression that signals the direction (improvement or decline)
+\end{itemize}
+
+Clients render KPIs with graphical indicators (traffic lights, gauges, arrows) that show at a glance whether a metric is on track against its objectives.
+
+\subsubsection{Perspectives}
+\label{subsec:perspectives}
+
+A \textbf{perspective} defines a subset of the cube aimed at a specific role or use case. It selects which dimensions, hierarchies, attributes, measures, and KPIs are visible.
+
+For example, a \textit{Product Manager} sees only the Product and Time dimensions with sales and margin measures; a \textit{Store Manager} accesses the Store and Time dimensions with operational measures.
+
+Perspectives provide no security, since the excluded data remains reachable through direct MDX, but they simplify navigation by hiding the elements that do not matter.
+
+\subsubsection{Security}
+\label{subsec:ssas-security}
+
+\textbf{Roles} manage the access permissions to the cube:
+\begin{itemize}
+    \item \textbf{Database permissions}: Read, Process, Full Control
+    \item \textbf{Cube permissions}: read, drill-through, write (writeback)
+    \item \textbf{Dimension security}: a filter on the visible members of a dimension
+    \item \textbf{Cell security}: restrictions at the single-cell level (computationally expensive)
+\end{itemize}
+
+Roles are assigned to Windows/Active Directory users or groups.
+
+\subsection{MDX: MultiDimensional eXpressions}
+\label{sec:mdx}
+
+MDX (MultiDimensional eXpressions) is the standard language for querying OLAP cubes and defining calculations. Originally developed by Microsoft, it is now adopted by most OLAP servers.
+
+\subsubsection{Query Structure}
+\label{subsec:mdx-query-structure}
+
+MDX syntax follows this pattern:
+
+\begin{lstlisting}
+[WITH <formula_specification> [, <formula_specification> ...]]
+SELECT [<axis_specification> [, <axis_specification> ...]]
+FROM <cube_specification>
+[WHERE <slicer_specification>]
+\end{lstlisting}
+
+\textbf{Basic example}:
+\begin{lstlisting}
+SELECT [Measures].[Store Sales] ON COLUMNS,
+       [Customer].[Geography].[Country].Members ON ROWS
+FROM [Sales]
+WHERE [Time].[Calendar].[Year].&[2024]
+\end{lstlisting}
+
+The \textbf{axes} (ON COLUMNS, ON ROWS, ON PAGES, \dots) define the dimensions of the result; the \textbf{WHERE} clause acts as a slicer, fixing the context for the measures.
+
+\subsubsection{Member References}
+\label{subsec:mdx-member-references}
+
+Members are identified through two syntaxes.
+
+\textbf{By key}: \texttt{[Dimension].[Hierarchy].[Level].\&[MemberKey]}
+
+\begin{lstlisting}
+[Time].[Calendar].[Month].&[2024-01-01T00:00:00]
+[Product].[Category].&[Bikes]
+\end{lstlisting}
+
+\textbf{By name}: \texttt{[Dimension].[Hierarchy].[Level].[MemberName]}
+
+\begin{lstlisting}
+[Time].[Calendar].[Month].[January 2024]
+[Geography].[Country].[Italy]
+\end{lstlisting}
+
+\subsubsection{Tuples, Sets, and Axes}
+\label{subsec:mdx-tuple-set-axis}
+
+A \textbf{tuple} identifies a cell by giving one member for each relevant dimension:
+\begin{lstlisting}
+([Time].[2024], [Product].[Bikes], [Measures].[Sales])
+\end{lstlisting}
+
+A \textbf{set} is an ordered collection of tuples:
+\begin{lstlisting}
+{[Product].[Bikes], [Product].[Clothing], [Product].[Accessories]}
+\end{lstlisting}
+
+The set operators include \texttt{+} (union), \texttt{-} (difference), and \texttt{*} (crossjoin).
+
+An \textbf{axis} specifies what to display along one axis of the result:
+\begin{lstlisting}
+NON EMPTY [Product].[Category].Members ON COLUMNS
+\end{lstlisting}
+
+\texttt{NON EMPTY} drops the tuples whose values are all NULL.
+
+\subsubsection{Navigation Functions}
+\label{subsec:mdx-navigation}
+
+MDX provides functions to navigate hierarchies:
+
+\begin{lstlisting}
+[Time].[2024].Parent              -- Parent member (All)
+[Time].[2024].Children            -- Children (Q1, Q2, Q3, Q4)
+[Time].[2024].[Q1].Siblings       -- Siblings (Q1, Q2, Q3, Q4)
+[Time].[2024].FirstChild          -- First child (Q1)
+[Time].[2024].LastChild           -- Last child (Q4)
+
+Ancestors([Time].[January 2024], 2)     -- Ancestors 2 levels up
+Descendants([Time].[2024], [Month])     -- Descendants at the Month level
+\end{lstlisting}
+
+\subsubsection{Calculated Members and Sets}
+\label{subsec:mdx-calculated}
+
+The \texttt{WITH} clause introduces formulas evaluated at query time.
+
+\textbf{Calculated Member}:
+\begin{lstlisting}
+WITH MEMBER [Measures].[Profit] AS
+    [Measures].[Sales] - [Measures].[Cost]
+
+WITH MEMBER [Measures].[Profit Margin] AS
+    [Measures].[Profit] / [Measures].[Sales],
+    FORMAT_STRING = "Percent"
+\end{lstlisting}
+
+\textbf{Named Set}:
+\begin{lstlisting}
+WITH SET [Top5Products] AS
+    TopCount(
+        [Product].[Product Name].Members,
+        5,
+        [Measures].[Sales]
+    )
+\end{lstlisting}
+
+\subsubsection{Common MDX Functions}
+\label{subsec:mdx-common-functions}
+
+\textbf{Aggregation}:
+\begin{lstlisting}
+Sum([Product].[Category].Members, [Measures].[Sales])
+Avg([Time].[Month].Members, [Measures].[Sales])
+Count([Customer].[Customer].Members)
+\end{lstlisting}
+
+\textbf{Time Intelligence}:
+\begin{lstlisting}
+-- Previous period
+([Time].CurrentMember.PrevMember, [Measures].[Sales])
+
+-- Same period previous year
+ParallelPeriod([Time].[Year], 1, [Time].CurrentMember)
+
+-- Year-to-date
+Sum(PeriodsToDate([Time].[Year], [Time].CurrentMember),
+    [Measures].[Sales])
+
+-- 3-month moving average
+Avg({[Time].CurrentMember.Lag(2):[Time].CurrentMember},
+    [Measures].[Sales])
+\end{lstlisting}
+
+\textbf{Ranking and filtering}:
+\begin{lstlisting}
+-- Top 10 products by sales
+TopCount([Product].[SKU].Members, 10, [Measures].[Sales])
+
+-- Products with sales > 10000
+Filter([Product].[SKU].Members,
+       [Measures].[Sales] > 10000)
+
+-- Rank of a product
+Rank([Product].CurrentMember,
+     Order([Product].[SKU].Members, [Measures].[Sales], BDESC))
+\end{lstlisting}
+
+
+\subsection{SSAS Build Checklist}
+\label{sec:ssas-checklist}
+
+For the SSAS concepts see Part~\ref{part:ssas}. This section gives the operational checklist.
+
+\subsubsection{Project Creation}
+\label{subsec:ssas-project-checklist}
+
+\begin{enumerate}
+    \item \textbf{New project:} File $\to$ New $\to$ Project $\to$ Analysis Services Multidimensional
+    \item \textbf{Data Source:} Right-click $\to$ New Data Source $\to$ OLE DB $\to$ Credentials $\to$ Test Connection
+    \item \textbf{Data Source View:} New DSV $\to$ Select tables $\to$ Verify relationships $\to$ Add Named Calculations if needed
+    \item \textbf{Dimensions:} For each dimension $\to$ New Dimension $\to$ Wizard $\to$ Select table, key, name attribute
+    \item \textbf{Hierarchies:} Open the dimension $\to$ Drag attributes into the Hierarchies area
+    \item \textbf{Cube:} New Cube $\to$ Select fact table $\to$ Select measures $\to$ Select dimensions
+    \item \textbf{Deploy:} Project Properties $\to$ Deployment $\to$ Configure Server and Database
+    \item \textbf{Process:} Right-click the cube $\to$ Process $\to$ Full
+\end{enumerate}
+
+\subsubsection{Useful Named Calculations}
+\label{subsec:named-calculations}
+
+To be added in the DSV on the date table:
+
+\begin{lstlisting}[language=SQL]
+-- Season
+CASE
+    WHEN month IN (6,7,8) THEN 'Summer'
+    WHEN month IN (9,10,11) THEN 'Autumn'
+    WHEN month IN (12,1,2) THEN 'Winter'
+    ELSE 'Spring'
+END
+
+-- YearMonth (for NameColumn)
+CAST(year AS VARCHAR(4)) + '-' + RIGHT('0' + CAST(month AS VARCHAR(2)), 2)
+\end{lstlisting}
+
+\subsection{Power BI}
+\label{sec:powerbi}
+
+Power BI is Microsoft's front-end for interactive reports and dashboards. It does not replace SSAS: it sits on top of the cube built here, querying it live so that the measures and hierarchies defined in the model drive the visuals. The rest of this section covers how to connect Power BI to the cube, which visual components map to which analytical needs, and how the visuals interact.
+
+\subsubsection{Connecting to the SSAS Cube}
+\label{subsec:powerbi-connection}
+
+\begin{enumerate}
+    \item Get Data $\to$ Database $\to$ SQL Server Analysis Services
+    \item Server: the SSAS server address
+    \item \textbf{Connect live}: select this option
+    \item Select the cube from the list
+\end{enumerate}
+
+\begin{notebox}
+\textbf{Connect Live limitations:} DAX measures cannot be created in Power BI; every measure must already exist in the SSAS cube.
+\end{notebox}
+
+\subsubsection{Visual Components}
+\label{subsec:powerbi-visuals}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lp{6cm}@{}}
+\toprule
+\textbf{Component} & \textbf{Configuration} \\
+\midrule
+Slicer & Field: dimension attribute. Vertical orientation for long lists. \\
+Bar Chart & Axis: dimension. Values: measure. Legend: segmentation. \\
+Line Chart & X-Axis: time. Y-Axis: measure. \\
+Map & Location: Geography. Size: measure. \\
+Card & A single aggregated measure. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsubsection{Interactivity}
+\label{subsec:powerbi-interactions}
+
+Select a visualisation $\to$ Format $\to$ Edit Interactions $\to$ for every other visualisation choose: \textbf{Filter} (filters the data), \textbf{Highlight} (highlights it), \textbf{None}.
+
+\subsection{Worked Exercises}
+\label{sec:ssas-exercises}
+
+The following exercises work the same analytical questions two ways: once in SQL over the star schema, once in MDX over the cube. Comparing the two solutions shows where MDX earns its keep, on ranking, period-over-period comparison, and cumulative totals, and where plain SQL is already enough. Each exercise states the problem, then gives both solutions in full.
+
+\subsubsection{Q0: Sales Distribution by Quarter and City}
+\label{subsec:ex-q0}
+
+\begin{theorybox}[frametitle={Exercise}]
+Compute the sales distribution by quarter and customer city, reporting: the absolute value, the percentage of the grand total, and the percentage of the customer's country.
+\end{theorybox}
+
+\subsubsection*{SQL Solution}
+\begin{lstlisting}[language=SQL]
+SELECT
+    t.quarter AS quarter,
+    c.city AS city,
+    SUM(sf.store_sales) AS sales,
+    -- Percentage of the grand total
+    SUM(sf.store_sales) * 100.0 /
+        SUM(SUM(sf.store_sales)) OVER () AS pct_of_total,
+    -- Percentage of the country
+    SUM(sf.store_sales) * 100.0 /
+        SUM(SUM(sf.store_sales)) OVER (PARTITION BY c.country) AS pct_of_country
+FROM sales_fact sf
+JOIN time_by_day t ON sf.time_id = t.time_id
+JOIN customer c ON sf.customer_id = c.customer_id
+GROUP BY t.quarter, c.city, c.country
+ORDER BY t.quarter, sales DESC;
+\end{lstlisting}
+
+\subsubsection*{MDX Solution}
+\begin{lstlisting}[language=MDX]
+WITH
+MEMBER [Measures].[Pct Total] AS
+    [Measures].[Store Sales] /
+    ([Measures].[Store Sales], [Time].[Quarter].[(All)],
+     [Customers].[City].[(All)]),
+    FORMAT_STRING = "0.00%"
+
+MEMBER [Measures].[Pct Country] AS
+    [Measures].[Store Sales] /
+    ([Measures].[Store Sales],
+     ANCESTOR([Customers].CurrentMember, [Customers].[Country])),
+    FORMAT_STRING = "0.00%"
+
+SELECT
+    {[Measures].[Store Sales],
+     [Measures].[Pct Total],
+     [Measures].[Pct Country]} ON COLUMNS,
+    NON EMPTY
+        [Time].[Quarter].Members * [Customers].[City].Members ON ROWS
+FROM [Sales]
+\end{lstlisting}
+
+\subsubsection{Q1: Top 5 Product Categories}
+\label{subsec:ex-q1}
+
+\begin{theorybox}[frametitle={Exercise}]
+Find the top 5 product categories by sales. Report: sales, units sold, distinct customers. Filters: Q1 1998, state of California.
+\end{theorybox}
+
+\subsubsection*{SQL Solution}
+\begin{lstlisting}[language=SQL]
+SELECT TOP 5
+    p.product_category,
+    SUM(sf.store_sales) AS sales,
+    SUM(sf.unit_sales) AS units,
+    COUNT(DISTINCT sf.customer_id) AS distinct_customers
+FROM sales_fact sf
+JOIN time_by_day t ON sf.time_id = t.time_id
+JOIN customer c ON sf.customer_id = c.customer_id
+JOIN product p ON sf.product_id = p.product_id
+WHERE t.quarter = 'Q1' AND t.the_year = 1998
+  AND c.state_province = 'CA'
+GROUP BY p.product_category
+ORDER BY sales DESC;
+\end{lstlisting}
+
+\subsubsection*{MDX Solution}
+\begin{lstlisting}[language=MDX]
+WITH
+MEMBER [Measures].[Distinct Customers] AS
+    DISTINCTCOUNT(EXISTING [Customers].[Customer ID].Members)
+
+SELECT
+    {[Measures].[Store Sales],
+     [Measures].[Unit Sales],
+     [Measures].[Distinct Customers]} ON COLUMNS,
+    TOPCOUNT(
+        [Product].[Product Category].Members,
+        5,
+        [Measures].[Store Sales]
+    ) ON ROWS
+FROM [Sales]
+WHERE (
+    [Time].[Quarter].[Q1 1998],
+    [Customers].[State Province].[CA]
+)
+\end{lstlisting}
+
+\subsubsection{Q2: Most Profitable Stores}
+\label{subsec:ex-q2}
+
+\begin{theorybox}[frametitle={Exercise}]
+Analyse the stores by average profit per customer and per basket. Include the month-over-month (MoM) variation.
+\end{theorybox}
+
+\subsubsection*{SQL Solution}
+\begin{lstlisting}[language=SQL]
+WITH StoreProfits AS (
+    SELECT
+        st.store_id, st.store_name,
+        t.quarter, t.the_month,
+        SUM(sf.store_sales - sf.store_cost) AS profit,
+        COUNT(DISTINCT sf.customer_id) AS n_customers,
+        COUNT(DISTINCT CONCAT(sf.customer_id, '-', sf.time_id)) AS n_baskets
+    FROM sales_fact sf
+    JOIN store st ON sf.store_id = st.store_id
+    JOIN time_by_day t ON sf.time_id = t.time_id
+    GROUP BY st.store_id, st.store_name, t.quarter, t.the_month
+),
+WithAvgs AS (
+    SELECT *,
+        profit / NULLIF(n_customers, 0) AS profit_per_customer,
+        profit / NULLIF(n_baskets, 0) AS profit_per_basket,
+        LAG(profit) OVER (PARTITION BY store_id ORDER BY the_month) AS prev_profit
+    FROM StoreProfits
+)
+SELECT store_name, quarter, the_month,
+       profit_per_customer, profit_per_basket,
+       CASE WHEN prev_profit > 0
+            THEN (profit - prev_profit) * 100.0 / prev_profit
+            ELSE NULL END AS mom_variation_pct
+FROM WithAvgs
+ORDER BY profit_per_customer DESC;
+\end{lstlisting}
+
+\subsubsection*{MDX Solution}
+\begin{lstlisting}[language=MDX]
+WITH
+MEMBER [Measures].[Profit] AS
+    [Measures].[Store Sales] - [Measures].[Store Cost]
+
+MEMBER [Measures].[Customer Count] AS
+    DISTINCTCOUNT([Customers].[Customer ID].Members)
+
+MEMBER [Measures].[Profit Per Customer] AS
+    IIF([Measures].[Customer Count] = 0, NULL,
+        [Measures].[Profit] / [Measures].[Customer Count])
+
+MEMBER [Measures].[Prev Month Profit] AS
+    ([Measures].[Profit], [Time].[Month].PrevMember)
+
+MEMBER [Measures].[MoM Variation] AS
+    IIF(ISEMPTY([Measures].[Prev Month Profit]) OR
+        [Measures].[Prev Month Profit] = 0,
+        NULL,
+        ([Measures].[Profit] - [Measures].[Prev Month Profit]) /
+        [Measures].[Prev Month Profit]
+    ),
+    FORMAT_STRING = "0.00%"
+
+SELECT
+    {[Measures].[Profit Per Customer], [Measures].[MoM Variation]} ON COLUMNS,
+    NON EMPTY
+        [Store].[Store Name].Members *
+        [Time].[Quarter].Members *
+        [Time].[Month].Members ON ROWS
+FROM [Sales]
+ORDER BY [Measures].[Profit Per Customer] DESC
+\end{lstlisting}
+
+\subsubsection{Q3: Top 5 Categories by Margin per Age Bracket}
+\label{subsec:ex-q3}
+
+\begin{theorybox}[frametitle={Exercise}]
+For each customer age bracket, find the 5 product categories with the best percentage margin (profit/sales).
+\end{theorybox}
+
+\subsubsection*{SQL Solution}
+\begin{lstlisting}[language=SQL]
+WITH CategoryMargins AS (
+    SELECT
+        c.age_bracket,
+        p.product_category,
+        SUM(sf.store_sales - sf.store_cost) * 100.0 /
+            NULLIF(SUM(sf.store_sales), 0) AS margin_pct,
+        ROW_NUMBER() OVER (
+            PARTITION BY c.age_bracket
+            ORDER BY SUM(sf.store_sales - sf.store_cost) /
+                     NULLIF(SUM(sf.store_sales), 0) DESC
+        ) AS rn
+    FROM sales_fact sf
+    JOIN customer c ON sf.customer_id = c.customer_id
+    JOIN product p ON sf.product_id = p.product_id
+    GROUP BY c.age_bracket, p.product_category
+)
+SELECT age_bracket, product_category, margin_pct
+FROM CategoryMargins
+WHERE rn <= 5
+ORDER BY age_bracket, margin_pct DESC;
+\end{lstlisting}
+
+\subsubsection*{MDX Solution}
+\begin{lstlisting}[language=MDX]
+WITH
+MEMBER [Measures].[Margin Pct] AS
+    IIF([Measures].[Store Sales] = 0, NULL,
+        ([Measures].[Store Sales] - [Measures].[Store Cost]) /
+        [Measures].[Store Sales]
+    ),
+    FORMAT_STRING = "0.00%"
+
+SELECT
+    [Measures].[Margin Pct] ON COLUMNS,
+    GENERATE(
+        [Customers].[Age Bracket].Members,
+        TOPCOUNT(
+            [Product].[Product Category].Members,
+            5,
+            ([Measures].[Margin Pct], [Customers].[Age Bracket].CurrentMember)
+        ) * {[Customers].[Age Bracket].CurrentMember}
+    ) ON ROWS
+FROM [Sales]
+\end{lstlisting}
+
+\subsubsection{Q4: Quantity Sold with Monthly Variation}
+\label{subsec:ex-q4}
+
+\begin{theorybox}[frametitle={Exercise}]
+Compute the quantity (Kg) sold for each month of 1998, with the percentage variation against the previous month.
+\end{theorybox}
+
+\subsubsection*{SQL Solution}
+\begin{lstlisting}[language=SQL]
+WITH MonthlyKg AS (
+    SELECT
+        t.quarter, t.the_month,
+        SUM(sf.unit_sales * p.gross_weight) AS kg_sold
+    FROM sales_fact sf
+    JOIN time_by_day t ON sf.time_id = t.time_id
+    JOIN product p ON sf.product_id = p.product_id
+    WHERE t.the_year = 1998
+    GROUP BY t.quarter, t.the_month
+)
+SELECT
+    quarter, the_month, kg_sold,
+    LAG(kg_sold) OVER (ORDER BY the_month) AS prev_month_kg,
+    CASE WHEN LAG(kg_sold) OVER (ORDER BY the_month) > 0
+         THEN (kg_sold - LAG(kg_sold) OVER (ORDER BY the_month))
+              * 100.0 / LAG(kg_sold) OVER (ORDER BY the_month)
+         ELSE NULL END AS mom_variation_pct
+FROM MonthlyKg
+ORDER BY the_month;
+\end{lstlisting}
+
+\subsubsection*{MDX Solution}
+\begin{lstlisting}[language=MDX]
+WITH
+MEMBER [Measures].[Kg Sold] AS
+    [Measures].[Unit Sales] * [Product].[Gross Weight]
+
+MEMBER [Measures].[Prev Month Kg] AS
+    ([Measures].[Kg Sold], [Time].[Month].PrevMember)
+
+MEMBER [Measures].[MoM Var Pct] AS
+    IIF(ISEMPTY([Measures].[Prev Month Kg]) OR
+        [Measures].[Prev Month Kg] = 0,
+        NULL,
+        ([Measures].[Kg Sold] - [Measures].[Prev Month Kg]) /
+        [Measures].[Prev Month Kg]
+    ),
+    FORMAT_STRING = "0.00%"
+
+SELECT
+    {[Measures].[Kg Sold],
+     [Measures].[Prev Month Kg],
+     [Measures].[MoM Var Pct]} ON COLUMNS,
+    [Time].[Month].Members ON ROWS
+FROM [Sales]
+WHERE [Time].[Year].[1998]
+\end{lstlisting}
+
+\subsubsection{Q1extra: Top 5 Categories by YTD Sales}
+\label{subsec:ex-q1extra}
+
+\begin{theorybox}[frametitle={Exercise}]
+Find the top 5 categories by cumulative (Year-To-Date) sales from 1 January 1998 in California, evaluated at March 1998.
+\end{theorybox}
+
+\subsubsection*{MDX Solution}
+\begin{lstlisting}[language=MDX]
+WITH
+MEMBER [Measures].[YTD Sales] AS
+    SUM(
+        PERIODSTODATE([Time].[Year], [Time].[Month].[March 1998]),
+        [Measures].[Store Sales]
+    )
+
+SELECT
+    [Measures].[YTD Sales] ON COLUMNS,
+    TOPCOUNT(
+        [Product].[Product Category].Members,
+        5,
+        [Measures].[YTD Sales]
+    ) ON ROWS
+FROM [Sales]
+WHERE [Customers].[State Province].[CA]
+\end{lstlisting}
+
+\subsubsection{Qextra: Cities per Region with Sales > \$4000}
+\label{subsec:ex-qextra}
+
+\begin{theorybox}[frametitle={Exercise}]
+How many cities per region exceeded \$4{,}000 in sales in March 1998?
+\end{theorybox}
+
+\subsubsection*{SQL Solution}
+\begin{lstlisting}[language=SQL]
+SELECT region, COUNT(*) AS n_cities_over_4000
+FROM (
+    SELECT c.state_province AS region, c.city,
+           SUM(sf.store_sales) AS city_sales
+    FROM sales_fact sf
+    JOIN time_by_day t ON sf.time_id = t.time_id
+    JOIN customer c ON sf.customer_id = c.customer_id
+    WHERE t.the_month = 3 AND t.the_year = 1998
+    GROUP BY c.state_province, c.city
+    HAVING SUM(sf.store_sales) > 4000
+) AS CityAbove4000
+GROUP BY region;
+\end{lstlisting}
+
+\subsubsection*{MDX Solution}
+\begin{lstlisting}[language=MDX]
+WITH
+MEMBER [Measures].[Cities Over 4000] AS
+    COUNT(
+        FILTER(
+            EXISTING [Customers].[City].Members,
+            [Measures].[Store Sales] > 4000
+        )
+    )
+
+SELECT
+    [Measures].[Cities Over 4000] ON COLUMNS,
+    [Customers].[State Province].Members ON ROWS
+FROM [Sales]
+WHERE [Time].[Month].[March 1998]
+\end{lstlisting}
+
+\subsection{MDX Pattern Reference}
+\label{sec:mdx-patterns}
+\label{mdx_patterns}
+
+A quick-reference table for the most common MDX patterns:
+{\scriptsize
+\begin{center}
+\begin{tabular}{@{}l>{\raggedright\arraybackslash}p{6.2cm}@{}}
+\toprule
+\textbf{Need} & \textbf{MDX Pattern} \\
+\midrule
+\% of total & \texttt{Measure / (Measure, Dim.[(All)])} \\
+\% of parent & \texttt{Measure / (Measure, ANCESTOR(CurrentMember, Level))} \\
+Top N & \texttt{TOPCOUNT(Set, N, Measure)} \\
+Bottom N & \texttt{BOTTOMCOUNT(Set, N, Measure)} \\
+Count distinct & \texttt{DISTINCTCOUNT(Set)} \\
+Previous month & \texttt{(Measure, [Time].[Month].PrevMember)} \\
+Previous year  & \texttt{(Measure, PARALLELPERIOD([Time].[Year], 1))} \\
+Cumulative YTD & \texttt{SUM(PERIODSTODATE([Time].[Year]), Measure)} \\
+\% variation & \texttt{(Curr - Prev) / Prev} with \texttt{IIF} to handle NULL/zero \\
+Filter on a measure & \texttt{FILTER(Set, Condition)} \\
+Top N per group & \texttt{GENERATE(OuterSet, TOPCOUNT(InnerSet, N, Measure))} \\
+Moving average & \texttt{AVG(\{[Time].CurrentMember.Lag(N):\allowbreak[Time].CurrentMember\},\allowbreak{} Measure)} \\
+Non-empty members & \texttt{NON EMPTY Set ON AXIS} or \texttt{NONEMPTY(Set, Measure)} \\
+Existing context & \texttt{EXISTING Set}: filters by the current context \\
+\bottomrule
+\end{tabular}
+\end{center}
+}

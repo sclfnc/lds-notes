@@ -1,0 +1,444 @@
+
+\section{Data Warehousing and OLAP}
+\label{part:dw-olap}
+
+A data warehouse organizes data according to a \textbf{dimensional schema} tuned for analysis, structurally different from a normalized operational database. Operational systems minimize redundancy to preserve transactional integrity, whereas dimensional modeling favors query simplicity, analytical performance, and comprehensibility for business users. The formal definition of a data warehouse and its founding properties appear in Section~\ref{sec:data-warehouse}.
+
+\subsection{Dimensional Modeling}
+\label{sec:dimensional-modeling}
+
+Dimensional modeling represents business processes through two kinds of tables: \textbf{fact tables} record the measurable events, and \textbf{dimension tables} supply the descriptive context that analysis is built on.
+
+\subsubsection{Fact Table}
+\label{subsec:fact-table}
+
+The \textbf{fact table} sits at the heart of the dimensional schema. Each row represents one business event (a sale, a shipment, a click) at a chosen level of granularity. Its components are the following:
+\begin{itemize}
+    \item \textbf{Foreign keys}: references to the dimension tables that place the event in context (who, what, when, where).
+    \item \textbf{Measures}: numeric values that quantify the event. They are typically additive (summable across every dimension), semi-additive (summable across some), or non-additive (ratios, percentages).
+    \item \textbf{Surrogate key} (optional): a synthetic identifier for the fact row.
+\end{itemize}
+
+The \textbf{grain} defines exactly what a single fact row stands for. Compare ``one row per product sold in each transaction'' against ``one row per product per store per day''. Choosing the grain is the most consequential design decision: a fine grain gives maximum analytical flexibility at the cost of storage, while an aggregated grain shrinks volumes but caps the detail that can ever be reached.
+
+\subsubsection{Dimension Tables}
+\label{subsec:dimension-tables}
+
+A \textbf{dimension table} holds the descriptive attributes that place the facts in context. Each dimension is one perspective for analysis: time, product, customer, geography, channel. These tables share a common structure:
+\begin{itemize}
+    \item \textbf{Surrogate key}: an auto-incremented integer that uniquely identifies each row, independent of the natural keys of the source systems. It enables SCD handling (Section~\ref{sec:scd}), integration of multiple sources, and fast joins.
+    \item \textbf{Natural key}: the original code from the source system, retained for reconciliation.
+    \item \textbf{Descriptive attributes}: textual fields used to filter, group, and label reports (product name, category, customer city).
+    \item \textbf{Hierarchies}: parent-child relationships between attributes that define levels of aggregation (Year $\rightarrow$ Quarter $\rightarrow$ Month $\rightarrow$ Day).
+\end{itemize}
+
+\subsubsection{Star Schema}
+\label{subsec:star-schema}
+
+\begin{notebox}
+The \textbf{star schema} is the foundational structure of the data warehouse. The fact table sits at the center, surrounded by dimension tables linked through foreign keys. The name comes from the star shape of the resulting ER diagram.
+
+Its distinctive features:
+\begin{itemize}
+    \item Dimension tables fully \textbf{denormalized}: every attribute of a dimension, hierarchies included, lives in a single table.
+    \item \textbf{Simple joins}: a query needs at most one join per dimension, always between fact and dimension.
+    \item \textbf{Intuitive queries}: the structure mirrors how users think about the data (``sales by product by month by region'').
+    \item \textbf{Effective optimization}: DBMSs implement techniques built for star-joins (bitmap index, star transformation).
+\end{itemize}
+\end{notebox}
+
+\subsubsection{Snowflake Schema}
+\label{subsec:snowflake-schema}
+
+\begin{notebox}
+The \textbf{snowflake schema} normalizes the dimensions in part, decomposing the hierarchies into separate tables. The Product dimension, for instance, splits into Product, Subcategory, and Category tables, each linked to the next.
+
+The snowflake form is preferable when:
+\begin{itemize}
+    \item Storage space is tight and dimensional redundancy is significant.
+    \item Dimensions have very high cardinality with repeated hierarchy attributes.
+    \item Hierarchies are shared across several dimensions (for example, a geographic hierarchy used by both Customers and Suppliers).
+    \item Referential integrity must be enforced on the hierarchies.
+\end{itemize}
+
+The drawbacks: more complex queries with multiple joins, potentially lower performance, and reduced comprehensibility for non-technical users.
+\end{notebox}
+
+\subsection{Storage Technologies}
+\label{sec:storage-technologies}
+
+The choice of storage technology has a marked effect on analytical performance.
+
+\subsubsection{Row Storage versus Column Storage}
+\label{subsec:row-vs-column-storage}
+
+Traditional RDBMSs store data \textbf{by row}: all attributes of a record sit contiguously on disk. This layout suits transactional operations that touch the whole record (INSERT, UPDATE, SELECT * WHERE id = x).
+
+A \textbf{columnar database} instead stores the values of each attribute contiguously, so that every column forms its own file or segment. This layout favors analytical queries, which usually aggregate a few columns over many rows. Columnar storage brings several advantages for analytics:
+\begin{itemize}
+    \item \textbf{Selective scanning}: only the attributes the query asks for are read. A query that sums sales by reading just the \texttt{amount} column over 100 million rows never loads the other 20 columns.
+    \item \textbf{Efficient compression}: values of one type and domain compress better. Run-length encoding, dictionary encoding, and delta encoding reach ratios of 10:1 or higher on low-cardinality columns.
+    \item \textbf{Vectorized operations}: processing contiguous vectors of values exploits the SIMD instructions of modern CPUs, handling several values per cycle.
+    \item \textbf{Late materialization}: intermediate results can stay in columnar form, rebuilding rows only at the end.
+\end{itemize}
+
+Columnar databases include Amazon Redshift, Google BigQuery, Snowflake, ClickHouse, and Vertica. SQL Server offers the \textbf{columnstore index} to enable columnar storage on selected tables.
+
+\subsection{OLAP Concepts}
+\label{sec:olap-concepts}
+
+OLAP (Online Analytical Processing) is the paradigm of interactive analysis over multidimensional data. The user navigates the data through intuitive operations that shift the vantage point of observation, surfacing patterns and anomalies.
+
+\subsubsection{The Data Cube}
+\label{subsec:data-cube}
+
+A \textbf{cuboid} is an aggregated view of the data over $k$ dimensions. Each axis corresponds to one level of a dimensional hierarchy, and each cell holds the measure values for that combination of coordinates.
+
+The full \textbf{data cube} comprises every cuboid obtainable from the combinations of hierarchy levels. With $n$ dimensions, each carrying $h_i$ levels (including the ALL level that stands for the total), the number of cuboids is
+\[
+\prod_{i=1}^{n} h_i
+\]
+
+For three dimensions Time (4 levels: ALL, Year, Month, Day), Product (3 levels: ALL, Category, Product), and Store (3 levels: ALL, Region, City), the count is $4 \times 3 \times 3 = 36$ distinct cuboids.
+
+\subsubsection{Navigation Operations}
+\label{subsec:olap-operations}
+
+\begin{notebox}
+\textbf{Drill-down}: increases detail by descending the hierarchy. From sales by Year to sales by Month, for example. It expands each cell into finer subsets, raising the number of rows in the result.
+
+\textbf{Roll-up}: reduces detail by climbing the hierarchy. From sales by City to sales by Region, for example. It aggregates cells into higher-level totals, cutting the number of rows.
+
+\textbf{Slice}: fixes one dimension to a single value, lowering the dimensionality of the cube. Selecting only Year = 2024 turns a 3D cube into a 2D ``slice''.
+
+\textbf{Dice}: selects a subcube by specifying ranges or sets of values on several dimensions at once. For example: products in categories A and B, in the years 2023--2024, for stores in the North region.
+
+\textbf{Pivot} (rotate): rotates the axes of the cube, rearranging the dimensions in the display. It changes only the presentation, not the data (swapping rows and columns in a pivot table, for instance).
+
+\textbf{Drill-across}: navigates between different fact tables that share conformed dimensions, allowing measures from distinct processes to be compared (sales versus budget, for example).
+
+\textbf{Drill-through}: reaches the transactional detail underneath an aggregated value, leaving the cube for the source data.
+\end{notebox}
+
+\subsection{Cuboids in SQL}
+\label{sec:sql-cubes}
+
+SQL Server generates cuboids through extensions of the GROUP BY clause that compute several aggregations within a single query.
+
+\subsubsection{Basic Dimensional Query}
+\label{subsec:basic-dimensional-query}
+
+A standard dimensional query performs the \textbf{star-join} between fact table and dimension tables, groups by the desired hierarchy levels, and computes the aggregated measures:
+
+\begin{lstlisting}
+SELECT L.city, P.brand, T.month,
+       SUM(F.dollars_sold) AS total_sales,
+       COUNT(*) AS num_transactions
+FROM fact_sales AS F
+  JOIN dim_location AS L ON F.location_key = L.location_key
+  JOIN dim_time AS T ON F.time_key = T.time_key
+  JOIN dim_product AS P ON F.product_key = P.product_key
+GROUP BY L.city, P.brand, T.month;
+\end{lstlisting}
+
+This query produces a single cuboid at grain (City, Brand, Month).
+
+\subsubsection{GROUP BY CUBE}
+\label{subsec:group-by-cube}
+
+The \texttt{CUBE} operator generates all $2^n$ possible grouping combinations for $n$ attributes, including subtotals and the grand total:
+
+\begin{lstlisting}
+SELECT L.city, P.brand, T.month,
+       SUM(F.dollars_sold) AS total_sales
+FROM fact_sales AS F
+  JOIN dim_location AS L ON F.location_key = L.location_key
+  JOIN dim_time AS T ON F.time_key = T.time_key
+  JOIN dim_product AS P ON F.product_key = P.product_key
+GROUP BY CUBE(L.city, P.brand, T.month);
+\end{lstlisting}
+
+With three attributes, CUBE produces $2^3 = 8$ groupings: (city, brand, month), (city, brand), (city, month), (brand, month), (city), (brand), (month), (). A \texttt{NULL} in a grouping column marks aggregation over that dimension.
+
+\subsubsection{GROUP BY ROLLUP}
+\label{subsec:group-by-rollup}
+
+The \texttt{ROLLUP} operator generates the initial subsequences of the attribute list, producing $n+1$ groupings for $n$ attributes. It fits hierarchies with a natural ordering:
+
+\begin{lstlisting}
+SELECT L.country, L.region, L.city,
+       SUM(F.dollars_sold) AS total_sales
+FROM fact_sales AS F
+  JOIN dim_location AS L ON F.location_key = L.location_key
+GROUP BY ROLLUP(L.country, L.region, L.city);
+\end{lstlisting}
+
+This produces the groupings (country, region, city), (country, region), (country), (), suited to reports with progressive subtotals along a geographic hierarchy.
+
+\subsubsection{GROUPING SETS}
+\label{subsec:grouping-sets}
+
+\texttt{GROUPING SETS} specifies exactly which grouping combinations to compute, giving full control:
+
+\begin{lstlisting}
+SELECT L.country, L.city, P.category,
+       SUM(F.dollars_sold) AS total_sales
+FROM fact_sales AS F
+  JOIN dim_location AS L ON F.location_key = L.location_key
+  JOIN dim_product AS P ON F.product_key = P.product_key
+GROUP BY GROUPING SETS (
+    (L.country, P.category),  -- Sales by country and category
+    (L.city),                  -- Sales by city (without category)
+    ()                         -- Grand total
+);
+\end{lstlisting}
+
+\subsubsection{The GROUPING() Function}
+\label{subsec:grouping-function}
+
+The \texttt{GROUPING()} function tells genuine NULLs (missing data) apart from NULLs that signal aggregation. It returns 1 when the column is aggregated, 0 otherwise:
+
+\begin{lstlisting}
+SELECT
+    CASE WHEN GROUPING(L.city) = 1 THEN 'All Cities'
+         ELSE L.city END AS city,
+    CASE WHEN GROUPING(P.brand) = 1 THEN 'All Brands'
+         ELSE P.brand END AS brand,
+    SUM(F.dollars_sold) AS total_sales
+FROM fact_sales AS F
+  JOIN dim_location AS L ON F.location_key = L.location_key
+  JOIN dim_product AS P ON F.product_key = P.product_key
+GROUP BY CUBE(L.city, P.brand);
+\end{lstlisting}
+
+\subsubsection{Implementing Slice and Dice}
+\label{subsec:slice-dice-sql}
+
+A \textbf{slice} is implemented with conditions in the WHERE clause:
+
+\begin{lstlisting}
+SELECT L.city, P.brand, SUM(F.dollars_sold) AS total_sales
+FROM fact_sales AS F
+  JOIN dim_location AS L ON F.location_key = L.location_key
+  JOIN dim_time AS T ON F.time_key = T.time_key
+  JOIN dim_product AS P ON F.product_key = P.product_key
+WHERE T.year = 2024  -- Slice: fix the time dimension
+GROUP BY CUBE(L.city, P.brand);
+\end{lstlisting}
+
+A \textbf{dice} uses several conditions together:
+
+\begin{lstlisting}
+WHERE T.year IN (2023, 2024)           -- Range on time
+  AND L.region = 'North'               -- Filter on geography
+  AND P.category IN ('Electronics', 'Appliances')  -- Filter on product
+\end{lstlisting}
+
+\subsection{OLAP Architectures}
+\label{sec:olap-architectures}
+
+OLAP systems are classified by the underlying storage technology. The choice depends on requirements for performance, scalability, data latency, and query complexity.
+
+\subsubsection{MOLAP}
+\label{subsec:molap}
+
+\textbf{Multidimensional OLAP} stores data in native multidimensional structures, typically optimized sparse arrays. The cuboids are pre-computed and materialized during cube processing.
+
+Its advantages: excellent performance on predefined queries, complex calculations pre-computed, efficient compression of the sparse arrays. Its drawbacks: processing time to build the cube, data latency (a refresh is required), limited scalability for very large cubes, and rigidity when the schema changes.
+
+\subsubsection{ROLAP}
+\label{subsec:rolap}
+
+\textbf{Relational OLAP} keeps the data in standard relational tables, translating OLAP operations into SQL queries. Aggregations are computed on-the-fly or pre-materialized in aggregate tables.
+
+Its advantages: high scalability (it inherits the scalability of the RDBMS), schema flexibility, real-time access to the data, no batch processing. Its drawbacks: performance that varies with the SQL optimizer, complex calculations that are less efficient, and a heavier load on the database.
+
+\subsubsection{HOLAP}
+\label{subsec:holap}
+
+\textbf{Hybrid OLAP} combines the two approaches: pre-computed aggregates in multidimensional form for frequent queries, detail data in relational tables for drill-through and ad-hoc analysis.
+
+{
+\scriptsize
+\begin{center}
+\begin{tabular}{@{}lp{2.8cm}p{2.8cm}@{}}
+\toprule
+\textbf{Aspect} & \textbf{MOLAP} & \textbf{ROLAP} \\
+\midrule
+Storage & Multidimensional arrays & Relational tables \\
+Query performance & Excellent (pre-aggregated data) & Variable (depends on SQL) \\
+Scalability & Limited (memory) & High \\
+Schema flexibility & Rigid & High \\
+Data latency & Batch refresh & Real time \\
+Complex calculations & Efficient (pre-computed) & On-the-fly \\
+\bottomrule
+\end{tabular}
+\end{center}
+}
+
+\begin{notebox}
+\textbf{Modern trends.}
+In-memory systems such as SAP HANA, SQL Server with columnstore, and the tabular models of SSAS blur the traditional distinction: they keep the data in compressed columnar form in memory and compute aggregations on-the-fly with performance comparable to MOLAP, yet retain the flexibility of ROLAP.
+\end{notebox}
+
+\subsection{Data Warehouse Schema: DDL and Load Order}
+\label{sec:dw-schema}
+
+The dimensional-modeling theory of Section~\ref{sec:dimensional-modeling} takes concrete form in the schema below: a star schema for a music-streaming warehouse, with its full DDL and the order in which its tables must be loaded. This is the schema of the course project, a warehouse built from scratch. It is distinct from the Foodmart sample database used by the worked exercises in Sections~\ref{sec:ssas-exercises} and~\ref{sec:etl-worked-exercises}, which the course provides ready-made; the two illustrate the same dimensional ideas on different data.
+
+\subsubsection{Complete DDL}
+\label{subsec:ddl-complete}
+
+\begin{lstlisting}[language=SQL]
+-- ============================================
+-- DIMENSION: GEOGRAPHY
+-- ============================================
+CREATE TABLE dbo.geography (
+    ID_geography   INT PRIMARY KEY,
+    country        VARCHAR(50),
+    country_lat    FLOAT,
+    country_lon    FLOAT,
+    region         VARCHAR(100),
+    province       VARCHAR(60),
+    city           VARCHAR(50)
+);
+
+-- ============================================
+-- DIMENSION: DATE (SQL reserved word)
+-- ============================================
+CREATE TABLE dbo.[date] (
+    ID_date       INT PRIMARY KEY,        -- YYYYMMDD format
+    full_date     DATE,
+    [year]        INT,
+    [month]       INT,
+    [day]         INT,
+    month_name    VARCHAR(15),
+    year_month    VARCHAR(7),             -- '2024-01' for the hierarchy
+    year_month_int INT,                   -- 202401 for ordering
+    season        VARCHAR(10),
+    year_season   VARCHAR(15),
+    [quarter]     INT,
+    day_of_week   INT,
+    is_weekend    BIT
+);
+
+-- ============================================
+-- DIMENSION: ARTIST
+-- ============================================
+CREATE TABLE dbo.artist (
+    ID_artist           VARCHAR(20) PRIMARY KEY,
+    ID_birth_geography  INT NOT NULL,
+    birth_date          DATE NULL,
+    name                VARCHAR(50),
+    type                VARCHAR(20),
+    gender              VARCHAR(20),
+
+    CONSTRAINT FK_artist_geography
+        FOREIGN KEY (ID_birth_geography)
+        REFERENCES dbo.geography(ID_geography)
+);
+
+-- ============================================
+-- DIMENSION: ALBUM
+-- ============================================
+CREATE TABLE dbo.album (
+    ID_album         VARCHAR(20) PRIMARY KEY,
+    album_name       VARCHAR(200),
+    album_type       VARCHAR(20),
+    album_label      VARCHAR(50),
+    ID_release_date  INT NULL,
+
+    CONSTRAINT FK_album_date
+        FOREIGN KEY (ID_release_date)
+        REFERENCES dbo.[date](ID_date)
+);
+
+-- ============================================
+-- DIMENSION: TEXT (textual features)
+-- ============================================
+CREATE TABLE dbo.[text] (
+    ID_text          INT PRIMARY KEY,
+    lyrics           VARCHAR(MAX),
+    language         VARCHAR(10),
+    explicit         BIT,
+    text_complexity  FLOAT,
+    n_tokens         INT,
+    n_sentences      INT
+);
+
+-- ============================================
+-- DIMENSION: SIMPHONY (audio features)
+-- ============================================
+CREATE TABLE dbo.simphony (
+    ID_simphony      INT PRIMARY KEY,
+    duration_s       FLOAT,
+    bpm              FLOAT,
+    loudness         FLOAT,
+    energy_index     FLOAT
+);
+
+-- ============================================
+-- DIMENSION: TRACK
+-- ============================================
+CREATE TABLE dbo.track (
+    ID_track        INT PRIMARY KEY,
+    ID_text         INT NOT NULL,
+    ID_simphony     INT NOT NULL,
+    ID_album        VARCHAR(20) NOT NULL,
+    title           VARCHAR(100),
+    disc_number     INT,
+    track_number    INT,
+    popularity      FLOAT,
+
+    CONSTRAINT FK_track_text
+        FOREIGN KEY (ID_text) REFERENCES dbo.[text](ID_text),
+    CONSTRAINT FK_track_simphony
+        FOREIGN KEY (ID_simphony) REFERENCES dbo.simphony(ID_simphony),
+    CONSTRAINT FK_track_album
+        FOREIGN KEY (ID_album) REFERENCES dbo.album(ID_album)
+);
+
+-- ============================================
+-- BRIDGE TABLE: PERFORMER (M:N relationship)
+-- ============================================
+CREATE TABLE dbo.performer (
+    ID_track   INT NOT NULL,
+    ID_artist  VARCHAR(20) NOT NULL,
+    isPrimary  BIT NOT NULL,
+
+    CONSTRAINT PK_performer PRIMARY KEY (ID_track, ID_artist),
+    CONSTRAINT FK_performer_track
+        FOREIGN KEY (ID_track) REFERENCES dbo.track(ID_track),
+    CONSTRAINT FK_performer_artist
+        FOREIGN KEY (ID_artist) REFERENCES dbo.artist(ID_artist)
+);
+
+-- ============================================
+-- FACT TABLE: SONG_FACT
+-- ============================================
+CREATE TABLE dbo.song_fact (
+    fact_song_key         INT IDENTITY(1,1) PRIMARY KEY,
+    ID_track              INT NOT NULL,
+    ID_upload_date        INT NOT NULL,
+    streams_first_month   BIGINT,
+
+    CONSTRAINT FK_fact_track
+        FOREIGN KEY (ID_track) REFERENCES dbo.track(ID_track),
+    CONSTRAINT FK_fact_date
+        FOREIGN KEY (ID_upload_date) REFERENCES dbo.[date](ID_date)
+);
+\end{lstlisting}
+
+\subsubsection{Load Order}
+\label{subsec:load-order}
+
+The FK constraints impose this order:
+
+\begin{enumerate}
+    \item \textbf{No dependencies:} geography, date, text, simphony
+    \item \textbf{Depends on geography:} artist
+    \item \textbf{Depends on date:} album
+    \item \textbf{Depends on album, text, simphony:} track
+    \item \textbf{Depends on track, artist:} performer
+    \item \textbf{Depends on track, date:} song\_fact
+\end{enumerate}

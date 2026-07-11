@@ -1,0 +1,109 @@
+% ============================================================
+% COURSE-SPECIFIC — Laboratory of Data Science.
+% Loaded by the shared main.tex after housestyle + common-preamble.
+% ============================================================
+
+% --- Title-block metadata (consumed by main.tex) ---
+\newcommand{\coursetitle}{Laboratory of Data Science}
+\newcommand{\coursesubtitle}{Business intelligence, ETL, data warehousing, OLAP}
+\newcommand{\courseyear}{2025/2026}
+
+% Course palette names mapped onto the house accent (bodies/callouts use these)
+\colorlet{primary}{accent}
+\colorlet{secondary}{accent}
+\colorlet{accentmid}{accent}
+\colorlet{codebg}{rowgray}
+\colorlet{codeframe}{rulegray}
+\colorlet{rosaantico}{rowgray}
+\colorlet{rosaanticosaturo}{rulegray}
+
+% Part heading kept (housestyle defines only section/subsection/subsubsection)
+\titleformat{\part}[display]
+    {\centering\large\bfseries\color{accent}}
+    {Part \thepart}{8pt}{\large}
+\titlespacing*{\part}{0pt}{10pt}{8pt}
+
+% ============================================================================
+% CODICE SQL COMPATTO
+% ============================================================================
+% Custom SQL \lstset (listings package comes from common-preamble). It sits
+% after common-preamble on purpose, so it overrides the house \lstset.
+\lstset{
+    language=SQL,
+    basicstyle=\ttfamily\scriptsize,
+    keywordstyle=\color{secondary}\bfseries,
+    stringstyle=\color{primary},
+    commentstyle=\color{accent}\itshape,
+    backgroundcolor=\color{codebg},
+    frame=single,
+    rulecolor=\color{codeframe},
+    framesep=2pt,
+    xleftmargin=3pt,
+    xrightmargin=3pt,
+    breaklines=true,
+    showstringspaces=false,
+    tabsize=2,
+    aboveskip=0.5em,
+    belowskip=0.3em,
+    morekeywords={OVER,PARTITION,RANK,DENSE_RANK,ROW_NUMBER,LAG,LEAD,
+                  ROWS,RANGE,PRECEDING,FOLLOWING,UNBOUNDED,ROLLUP,CUBE,
+                  GROUPING,SETS,WITH,NTILE,PERCENT_RANK,CUME_DIST}
+}
+
+% MDX language for listings (SSAS multidimensional queries). Defined here so the
+% worked exercises in sec/08 can tag their MDX solutions [language=MDX].
+\lstdefinelanguage{MDX}{
+    morekeywords={SELECT,FROM,WHERE,ON,COLUMNS,ROWS,AXIS,MEMBER,SET,WITH,AS,
+                  NON,EMPTY,CROSSJOIN,FILTER,ORDER,GENERATE,TOPCOUNT,BOTTOMCOUNT,
+                  HEAD,TAIL,SUM,AVG,COUNT,MAX,MIN,DISTINCTCOUNT,AGGREGATE,
+                  CURRENTMEMBER,PREVMEMBER,NEXTMEMBER,PARENT,CHILDREN,MEMBERS,
+                  ANCESTOR,DESCENDANTS,LAG,LEAD,PERIODSTODATE,PARALLELPERIOD,
+                  YTD,MTD,QTD,IIF,ISEMPTY,NONEMPTY,EXISTING,LASTPERIODS,
+                  DESC,ASC,BDESC,BASC,ALL,LEVEL,DIMENSION,HIERARCHY,PROPERTIES},
+    sensitive=false,
+    morecomment=[l]{--},
+    morecomment=[n]{/*}{*/},
+    morestring=[b]",
+    morestring=[b]'
+}
+
+% Boxes: map this course's names onto the shared house-box grammar (thin accent
+% band) from common-preamble, so every framed callout matches the collection.
+% The former course-specific mdframed definitions were removed. theorybox still
+% accepts [frametitle={...}] (aliased to the tcolorbox title key in common).
+\newtcolorbox{notebox}[1][]{housebox, #1}
+\newtcolorbox{examplebox}[1][]{housebox, #1}
+\newtcolorbox{theorybox}[1][]{housebox, #1}
+
+% ============================================================================
+% TOC COMPATTO
+% ============================================================================
+% Part entry in ToC accent (rest owned by housestyle)
+\renewcommand{\cftpartfont}{\normalsize\bfseries\color{accent}}
+\renewcommand{\cftpartpagefont}{\normalsize\bfseries\color{accent}}
+
+% ============================================================================
+% HYPERREF (sempre tra gli ultimi pacchetti)
+% ============================================================================
+\usepackage{hyperref}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=accent,
+    urlcolor=accent,
+    pdftitle={Laboratory of Data Science},
+    pdfauthor={Francesco Secoli}
+}
+
+% --- Document body: the section list (expanded by main.tex) ---
+\newcommand{\coursebody}{%
+  \input{sec/02}%
+  \input{sec/03}%
+  \input{sec/04}%
+  \input{sec/05}%
+  \input{sec/06}%
+  \input{sec/07}%
+  \input{sec/08}%
+}
+% Appendices A (exercises) and B (project guide) were dissolved 2026-07-10:
+% their material is now integrated inline into the teaching sections
+% (exercises -> 06/08, project guide -> 04/06/07/08, Power BI -> end of 08).

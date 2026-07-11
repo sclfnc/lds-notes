@@ -1,0 +1,894 @@
+
+\section{ETL -- Extract, Transform and Load}
+\label{part:etl-ssis}
+
+The ETL process (Extract, Transform, Load) is the bridge between operational data sources and the data warehouse: it makes sure the data arrives clean, consistent, and ready for analysis (see Section~\ref{sec:etl-overview} for an introduction). This part examines the three phases of the process, the transformation operations they perform, and SQL Server Integration Services (SSIS) as an implementation platform.
+
+\subsection{Phases of the ETL Process}
+\label{sec:etl-phases}
+
+The ETL process runs in three sequential phases, each with its own responsibilities and its own operational difficulties.
+
+\subsubsection{Extraction}
+\label{subsec:extraction-phase}
+
+Extraction reaches into the data sources to retrieve the information to be processed. Its main difficulties come from how heterogeneous a corporate data ecosystem tends to be:
+
+\begin{itemize}
+    \item \textbf{Source heterogeneity}: relational databases (SQL Server, Oracle, MySQL), flat files (CSV, JSON, XML), REST APIs, SOAP web services, spreadsheets, legacy systems.
+    \item \textbf{Geographic distribution}: local sources, remote data centres, cloud services (AWS, Azure, GCP).
+    \item \textbf{Connection protocols}: ODBC, JDBC, OLE DB, native connectors, proprietary APIs.
+    \item \textbf{Operational constraints}: limited time windows so as not to impact the OLTP systems, network bandwidth management, authentication and authorization.
+\end{itemize}
+
+Extraction can run in \textbf{full} mode (all the data) or \textbf{incremental} mode (only the changes since the last run). Incremental mode needs a way to tell which records are new or modified: a timestamp, a modification flag, or Change Data Capture (Section~\ref{sec:cdc}).
+
+\subsubsection{Transformation}
+\label{subsec:transformation-phase}
+
+Transformation is the heart of the ETL process. Raw data is reshaped to meet the quality, consistency, and conformance requirements of the target schema.
+
+\begin{theorybox}[frametitle={Transformation operations}]
+\textbf{Selection and cleaning}: dropping unnecessary rows and columns, removing duplicates, handling corrupted or out-of-range values (for example a negative age, or future dates on past events).
+
+\textbf{Missing-value handling}: the strategy depends on the context: substitution with a default value, statistical imputation (mean, median, mode), interpolation, or dropping the record.
+
+\textbf{Normalization}: converting heterogeneous formats to a common standard: units of measure, character encodings, date formats, numeric scaling (min-max, z-score).
+
+\textbf{Splitting and merging}: decomposing compound attributes (for example ``Via Roma 15, Milano'' into street, number, city) or combining separate fields.
+
+\textbf{Surrogate keys}: generating synthetic identifiers (auto-incrementing integers) to replace the natural keys of the sources, which guarantees uniqueness inside the warehouse.
+
+\textbf{Lookup and enrichment}: joining against reference tables to translate codes into descriptions, validate values, or add extra information to the records.
+
+\textbf{Aggregation}: changing granularity by grouping and computing aggregate measures (for example daily transactions rolled up to monthly totals).
+
+\textbf{Derived attributes}: computing new measures from existing ones (for example margin = revenue $-$ cost, age = current date $-$ birth date).
+
+\textbf{Record linkage}: finding and reconciling records that represent the same real entity but come from different sources with different keys and formats.
+
+\textbf{Deduplication}: detecting and removing duplicates through exact or fuzzy matching.
+\end{theorybox}
+
+\subsubsection{Loading}
+\label{subsec:loading-phase}
+
+Loading writes the transformed data into its final destination. The mode of operation depends on the context:
+
+\begin{itemize}
+    \item \textbf{Initial load}: the first population of the data warehouse with the entire available history. This is a one-off operation, typically run during project start-up.
+
+    \item \textbf{Incremental load}: periodic update carrying only the changes since the last load. Three strategies are available:
+    \begin{itemize}
+        \item \textit{Append}: insert new records without touching the existing ones.
+        \item \textit{Destructive merge}: overwrite existing records with the new values.
+        \item \textit{Constructive merge}: keep history by preserving earlier versions.
+    \end{itemize}
+
+    \item \textbf{Full refresh}: reload the whole destination. This helps when the changes are too tangled to track incrementally, or when the data needs to be fully realigned.
+\end{itemize}
+
+\begin{notebox}
+\textbf{Staging area.}
+The staging area is an intermediate zone where data lives temporarily while it is being processed. It isolates the ETL process from the production systems, it allows checkpoints and recovery on error, and it supports complex transformations that need more than one pass.
+\end{notebox}
+
+\subsubsection{Process Orchestration}
+\label{subsec:etl-orchestration}
+
+Running an ETL process means coordinating several operational concerns at once:
+
+\begin{itemize}
+    \item \textbf{Control flow}: sets the order of task execution through precedence constraints. For example, the dimension tables must be updated before the fact table so that referential integrity holds; independent dimensions can be processed in parallel.
+
+    \item \textbf{Data flow}: describes the path the data takes through the transformations. Each component takes records in, processes them, and produces output for the next component, so the components form a pipeline.
+
+    \item \textbf{Error handling}: handling errors and warnings with recovery strategies: logging, notifications, automatic retries, redirecting failed records to error tables for later analysis.
+
+    \item \textbf{Scheduling}: planning automatic runs: nightly batch, intraday refresh, event-driven triggers.
+
+    \item \textbf{Monitoring and audit}: collecting metadata to trace data lineage, measure performance, and check the completeness and quality of each load.
+\end{itemize}
+
+\subsection{SQL Server Integration Services}
+\label{sec:ssis}
+
+SQL Server Integration Services (SSIS) is Microsoft's ETL platform. It ships as part of the SQL Server suite but works on its own as well, integrating heterogeneous data sources.
+
+\subsubsection{Development Environment}
+\label{subsec:ssis-environment}
+
+SSIS projects are built in \textbf{SQL Server Data Tools (SSDT)}, which is integrated into Visual Studio. Their organization follows the usual Visual Studio hierarchy:
+
+\begin{itemize}
+    \item \textbf{Solution}: a container of related projects, so several ETL projects can be managed as one unit.
+    \item \textbf{Project}: a single Integration Services project holding packages, connection managers, and shared parameters.
+    \item \textbf{Package}: an executable unit with the \texttt{.dtsx} extension, holding the full definition of one ETL process (its control flow and its data flow).
+\end{itemize}
+
+A new project is created through \texttt{File} $\rightarrow$ \texttt{New} $\rightarrow$ \texttt{Project} $\rightarrow$ \texttt{Integration Services Project}.
+
+\subsubsection{Control Flow}
+\label{subsec:ssis-control-flow}
+
+The control flow defines the package's orchestration logic through three building blocks:
+
+\begin{examplebox}
+\textbf{Task}: an atomic unit of work that performs one specific operation.
+\begin{itemize}
+    \item \textit{Execute SQL Task}: runs a query or a stored procedure.
+    \item \textit{Data Flow Task}: wraps a data transformation pipeline.
+    \item \textit{File System Task}: file operations (copy, move, delete).
+    \item \textit{Send Mail Task}: email notifications.
+    \item \textit{Script Task}: custom logic in C\# or VB.NET.
+\end{itemize}
+
+\textbf{Container}: a logical grouping of tasks.
+\begin{itemize}
+    \item \textit{Sequence Container}: organizes related tasks.
+    \item \textit{For Loop Container}: iteration with a counter.
+    \item \textit{Foreach Loop Container}: iteration over collections (files, recordsets, variables).
+\end{itemize}
+
+\textbf{Precedence Constraint}: a constraint that sets the execution order between tasks. Its conditions are \textit{Success} (proceed if the preceding task succeeds), \textit{Failure} (proceed if it fails), and \textit{Completion} (proceed either way). It also accepts boolean expressions for conditional branching.
+\end{examplebox}
+
+\subsubsection{Data Flow}
+\label{subsec:ssis-data-flow}
+
+The \textbf{Data Flow Task} is a special task that defines a data transformation pipeline. Inside it, three categories of component do the work:
+
+\textbf{Source}: connectors that acquire data. The main types are:
+\begin{itemize}
+    \item OLE DB Source, ADO.NET Source: relational databases
+    \item Flat File Source: CSV, fixed-width files
+    \item Excel Source: spreadsheets
+    \item XML Source: XML documents
+    \item Raw File Source: the binary SSIS format, used for performance
+\end{itemize}
+
+\textbf{Transformation}: operators that manipulate the data in transit. The most used are:
+\begin{itemize}
+    \item \textit{Derived Column}: computes new columns from expressions
+    \item \textit{Data Conversion}: converts data types
+    \item \textit{Lookup}: joins against reference tables
+    \item \textit{Conditional Split}: routes records conditionally
+    \item \textit{Merge Join}: joins two sorted flows
+    \item \textit{Union All}: unions several flows
+    \item \textit{Aggregate}: grouping and aggregate functions
+    \item \textit{Sort}: sorts the flow
+    \item \textit{Multicast}: duplicates the flow toward multiple destinations
+\end{itemize}
+
+\textbf{Destination}: connectors that load the data, offering the same types as the sources.
+
+Every component exposes input and output columns that are mapped to build the flow. The \textbf{Error Output} is a special output that receives the records failing to process, so errors can be handled on their own path.
+
+\subsubsection{Type System}
+\label{subsec:ssis-type-system}
+
+SSIS defines its own data-type system that acts as an intermediary between heterogeneous sources and destinations. The conversion flow is: source type $\rightarrow$ SSIS type $\rightarrow$ destination type. This keeps transformations consistent and portable across different databases.
+
+The SSIS types cover the usual families:
+\begin{itemize}
+    \item \texttt{DT\_I4} (4-byte integer) and \texttt{DT\_R8} (8-byte float) for numbers;
+    \item \texttt{DT\_STR}/\texttt{DT\_WSTR} for ANSI and Unicode strings;
+    \item \texttt{DT\_DATE}/\texttt{DT\_DBTIMESTAMP} for dates and timestamps;
+    \item \texttt{DT\_DECIMAL}/\texttt{DT\_NUMERIC} for exact decimals;
+    \item \texttt{DT\_BYTES} for binary data.
+\end{itemize}
+
+\subsection{Deployment and Execution}
+\label{sec:ssis-deployment}
+
+\subsubsection{Debugging and Testing}
+\label{subsec:ssis-debug}
+
+While a package is being developed, SSIS offers integrated debugging tools:
+
+\begin{itemize}
+    \item \textbf{Data Viewer}: inspects the data in transit between data-flow components, showing a sample of records so a transformation can be verified.
+    \item \textbf{Breakpoint}: stops execution at specific points so the state can be examined.
+    \item \textbf{Progress tab}: real-time monitoring of progress and execution statistics.
+\end{itemize}
+
+\subsubsection{Deployment Modes}
+\label{subsec:ssis-deployment-modes}
+
+SSIS packages can be deployed in several ways:
+
+\begin{itemize}
+    \item \textbf{File system}: saved as a \texttt{.dtsx} file, run locally.
+    \item \textbf{SSIS Catalog}: deployed to a SQL Server instance in the SSISDB database, with versioning, parametrization, and centralized monitoring.
+    \item \textbf{Package Store}: deployed to the legacy SSIS store (MSDB or a file system managed by the SSIS service).
+\end{itemize}
+
+To deploy to a server, \texttt{Project} $\rightarrow$ \texttt{Deploy} opens the deployment wizard that guides publication to the SSIS catalog.
+
+\subsubsection{Execution Modes}
+\label{subsec:ssis-execution}
+
+\begin{notebox}
+\textbf{Local execution}: directly from Visual Studio (F5) during development; from the command line with the \texttt{dtexec} utility; by double-clicking the \texttt{.dtsx} file.
+
+\textbf{Server execution}: from the SSISDB catalog through SQL Server Management Studio; scheduled with SQL Server Agent for automatic periodic runs; invoked from the \texttt{catalog.start\_execution} stored procedure.
+\end{notebox}
+
+\subsection{Change Data Capture}
+\label{sec:cdc}
+
+\textbf{Change Data Capture} (CDC) is a technique for identifying and capturing the changes made to source tables, which makes incremental loads far cheaper. Rather than comparing full snapshots, CDC intercepts the changes at the source.
+
+\begin{center}
+\begin{tikzpicture}[
+    node distance=0.5cm,
+    db/.style={cylinder, draw=secondary, fill=codebg, shape border rotate=90, minimum width=1cm, minimum height=0.8cm, aspect=0.3, font=\scriptsize},
+    table/.style={rectangle, draw=accent, fill=white, minimum width=1.2cm, minimum height=0.5cm, font=\tiny},
+    process/.style={circle, draw=primary, fill=rosaantico, minimum size=0.6cm, font=\tiny},
+    arrow/.style={-{Stealth}, thick, accent}
+]
+
+\node[db, label={[font=\scriptsize]above:OLTP}] (oltp) {};
+
+\node[table, below=0.8cm of oltp] (src) {Source Tables};
+
+\node[table, right=1.5cm of src] (log) {Transaction Log};
+
+\node[process, below=0.4cm of log] (cap) {C};
+\node[font=\tiny, right=0.1cm of cap] {Capture};
+
+\node[table, below=0.8cm of src] (chg) {Change Tables};
+
+\node[table, below=0.4cm of chg, minimum width=1.8cm] (qry) {CDC Query Functions};
+
+\node[db, below=1cm of qry, label={[font=\scriptsize]below:Data Warehouse}] (dw) {};
+
+\node[process, right=0.8cm of dw] (etl) {E};
+\node[font=\tiny, right=0.1cm of etl] {ETL};
+
+\draw[arrow] (src) -- (log);
+\draw[arrow] (log) -- (cap);
+\draw[arrow] (cap) -- (chg);
+\draw[arrow] (src) -- (chg);
+\draw[arrow] (chg) -- (qry);
+\draw[arrow] (qry) -- (etl);
+\draw[arrow] (etl) -- (dw);
+
+\end{tikzpicture}
+\end{center}
+
+The SQL Server CDC mechanism works as follows:
+
+\begin{enumerate}
+    \item An asynchronous \textit{capture process} reads the transaction log of the source database.
+    \item For each CDC-enabled table, it identifies the INSERT, UPDATE, and DELETE operations.
+    \item It populates \textit{change tables} that record the history of changes with a timestamp and the type of operation.
+    \item CDC query functions (\texttt{cdc.fn\_cdc\_get\_all\_changes\_*}, \texttt{cdc.fn\_cdc\_get\_net\_changes\_*}) extract the changes over a time interval.
+    \item The ETL process queries these functions to load only the deltas, which cuts the volume of data processed dramatically.
+\end{enumerate}
+
+\begin{notebox}
+\textbf{Advantages of CDC}: no impact on the source tables (no audit columns needed), full capture of every change (including intermediate ones), native support in SQL Server. \textbf{Limitations}: it requires SQL Server Enterprise or Developer Edition, and it adds storage overhead for the change tables.
+\end{notebox}
+
+\subsection{Slowly Changing Dimensions}
+\label{sec:scd}
+
+\textbf{Slowly Changing Dimensions} (SCD) manage how the attributes of dimension tables evolve over time. Unlike transactional data, which accumulates, dimensions describe entities (customers, products, locations) whose attributes may change: a customer moves house, a product is reclassified, an employee changes department.
+
+The strategy to adopt depends on the analytical requirement: should the data be analyzed with the current values, or with the historical values as they stood at the time of the transaction?
+
+\begin{theorybox}[frametitle={SCD types}]
+\textbf{Type 0: Retain Original}: the attribute is never changed after the first insertion. This fits immutable values (birth date, tax code, natural IDs).
+
+\textbf{Type 1: Overwrite}: the new value replaces the old one, keeping no history. Historical analyses then see the current value even for past transactions. This fits error corrections or attributes that carry no historical weight (a spelling fix, say).
+
+\textbf{Type 2: Add New Row}: every change creates a new record with a distinct surrogate key. The previous record is ``closed'' with an end-of-validity date; the new record gets a start-of-validity date and the flag \texttt{IsCurrent = 1}. Full history is kept: past transactions stay attached to the dimension record that was valid at the time. This fits analytically relevant attributes (customer address, product category).
+
+\textbf{Type 3: Add New Column}: the previous value is kept in a dedicated column (for example \texttt{PreviousAddress}). It trades space against history, and is limited to one or a few historical values.
+
+\textbf{Type 4: History Table}: the current dimension is kept in one table and the full history in a separate one (a mini-dimension). This helps for dimensions with many attributes of which only a few change often.
+
+\textbf{Type 6: Hybrid}: combines Type 1 + 2 + 3. Every historical record (Type 2) also carries the current value (Type 1), which makes queries that need both perspectives easier to write.
+\end{theorybox}
+
+SSIS provides the \textbf{Slowly Changing Dimension Wizard}, which generates the SCD data flow automatically and can apply a different type to each attribute of the dimension.
+
+
+\subsection{Worked Exercises}
+\label{sec:etl-worked-exercises}
+\label{etl_ex}
+
+The exercises below apply the ETL machinery of this section to concrete tasks: stratified sampling, an aggregation pipeline, a travel-sales report, weekend purchase frequency, and an SCD update.
+
+\subsubsection{Stratified Sampling}
+\label{subsec:ex-stratified-sampling}
+\label{stratifiedSampling_appendix}
+
+\begin{theorybox}[frametitle={Exercise}]
+Given a table $T$ and a categorical column $A$, extract a random subset of 30\% of the rows while preserving the proportion of the distinct values of $A$. For instance, if $T$ contains 65\% males and 35\% females, the sample must keep the same proportions.
+
+Implement the solution both in Python (with pyodbc) and in SSIS.
+\end{theorybox}
+
+\subsubsection*{Intuition Behind the Algorithm}
+
+For each group of values of $A$ (males, say), two counters are kept: \texttt{totRow} (rows still to examine) and \texttt{selRow} (rows still to select). The selection probability of record $i$ is $\frac{selRow}{totRow}$, which adapts dynamically and guarantees that exactly the desired number is drawn.
+
+\begin{notebox}
+\textbf{Random generation.} To select with probability $\frac{x}{y}$, generate a number $n \in [0, y)$ and select if $n < x$. In Python: \texttt{random.randint(0, y-1) < x} or \texttt{random.random() < x/y}.
+\end{notebox}
+
+\subsubsection*{Python Solution, Method 1: ORDER BY NEWID()}
+
+This approach delegates the randomization to the database using SQL Server's \texttt{NEWID()}:
+
+\begin{lstlisting}[language=Python, basicstyle=\ttfamily\scriptsize]
+import pyodbc
+import csv
+
+# Parameters
+PERCENTAGE = 0.30
+table = 'census'
+column = 'sex'
+output_file = 'sample_newid.csv'
+
+# Connection
+conn_str = ('DRIVER={ODBC Driver 17 for SQL Server};'
+            'SERVER=tcp:server.example.com;DATABASE=mydb;'
+            'UID=user;PWD=password')
+conn = pyodbc.connect(conn_str)
+conn_inner = pyodbc.connect(conn_str)
+cursor = conn.cursor()
+
+# Distribution per stratum
+cursor.execute(f"SELECT {column}, COUNT(*) FROM {table} GROUP BY {column}")
+
+with open(output_file, 'w', newline='') as f:
+    writer = csv.writer(f)
+    first = True
+
+    for col_value, n_rows in cursor:
+        n_select = int(n_rows * PERCENTAGE)
+
+        # Server-side random selection
+        query = f"""SELECT TOP {n_select} *
+                    FROM {table}
+                    WHERE {column} = '{col_value}'
+                    ORDER BY NEWID()"""
+
+        cursor_inner = conn_inner.cursor()
+        cursor_inner.execute(query)
+
+        if first:
+            writer.writerow([col[0] for col in cursor_inner.description])
+            first = False
+
+        for row in cursor_inner:
+            writer.writerow(row)
+        cursor_inner.close()
+
+cursor.close()
+conn.close()
+conn_inner.close()
+\end{lstlisting}
+
+\subsubsection*{Python Solution, Method 2: Probabilistic Algorithm}
+
+This approach makes the random selection on the client side, which helps when the server should not be burdened:
+
+\begin{lstlisting}[language=Python, basicstyle=\ttfamily\scriptsize]
+import pyodbc
+import csv
+import random
+
+def stratified_sample(cursor, writer, total, to_select):
+    """Random selection with adaptive probability."""
+    for row in cursor:
+        prob = to_select / float(total)
+        if random.random() < prob:
+            writer.writerow(row)
+            to_select -= 1
+        total -= 1
+
+# Parameters and connection (as above)
+PERCENTAGE = 0.30
+table = 'census'
+column = 'sex'
+
+conn = pyodbc.connect(conn_str)
+cursor = conn.cursor()
+cursor.execute(f"SELECT {column}, COUNT(*) FROM {table} GROUP BY {column}")
+
+conn_inner = pyodbc.connect(conn_str)
+
+with open('sample_prob.csv', 'w', newline='') as f:
+    writer = csv.writer(f)
+    first = True
+
+    for col_value, n_rows in cursor:
+        n_select = int(n_rows * PERCENTAGE)
+
+        # Retrieve ALL rows of the stratum
+        cursor_inner = conn_inner.cursor()
+        cursor_inner.execute(f"SELECT * FROM {table} WHERE {column} = '{col_value}'")
+
+        if first:
+            writer.writerow([col[0] for col in cursor_inner.description])
+            first = False
+
+        # Client-side random selection
+        stratified_sample(cursor_inner, writer, n_rows, n_select)
+        cursor_inner.close()
+
+conn.close()
+conn_inner.close()
+\end{lstlisting}
+
+\subsubsection*{SSIS Solution}
+
+\begin{center}
+\begin{tikzpicture}[
+    node distance=0.6cm,
+    box/.style={rectangle, draw=secondary, fill=codebg, minimum width=2.8cm, minimum height=0.5cm, font=\scriptsize},
+    arrow/.style={-{Stealth}, thick, color=accent}
+]
+\node[box] (src) {OLE DB Source};
+\node[box, below left=0.8cm and 0.3cm of src] (male) {Row Sampling 30\%};
+\node[box, below right=0.8cm and 0.3cm of src] (female) {Row Sampling 30\%};
+\node[box, below=1.8cm of src] (union) {Union All};
+\node[box, below=of union] (dest) {Flat File Destination};
+
+\draw[arrow] (src) -- node[above left, font=\tiny]{sex='M'} (male);
+\draw[arrow] (src) -- node[above right, font=\tiny]{sex='F'} (female);
+\draw[arrow] (male) -- (union);
+\draw[arrow] (female) -- (union);
+\draw[arrow] (union) -- (dest);
+
+\node[font=\tiny, above=0.1cm of src] {Conditional Split};
+\end{tikzpicture}
+\end{center}
+
+\textbf{1. OLE DB Source}: \texttt{SELECT * FROM census}
+
+\textbf{2. Conditional Split}:
+\begin{lstlisting}
+Output: Male      Condition: sex == "M"
+Output: Female    Condition: sex == "F"
+\end{lstlisting}
+
+\textbf{3. Row Sampling} (one per branch): Percentage = 30, Random seed = 42
+
+\textbf{4. Union All}: merges the two sampled flows
+
+\textbf{5. Flat File Destination}: \texttt{census\_sample\_30pct.csv}
+
+\begin{notebox}
+\textbf{Scalability.} If the stratification column has many distinct values, use a Script Component that implements the probabilistic Python algorithm.
+\end{notebox}
+
+\subsubsection{Aggregation Pipeline}
+\label{subsec:ex-aggregation-pipeline}
+
+\begin{theorybox}[frametitle={Exercise}]
+Given the FoodMart database, design an SSIS package that produces a CSV file listing the products ordered by decreasing average profit. The profit of a single sale is \texttt{store\_sales - store\_cost}; the average profit is the ratio between the sum of the profits and the units sold.
+\end{theorybox}
+
+\subsubsection*{Equivalent SQL Query}
+\begin{lstlisting}[language=SQL]
+SELECT product_id
+FROM sales_fact
+GROUP BY product_id
+ORDER BY SUM(store_sales - store_cost) / SUM(unit_sales) DESC
+\end{lstlisting}
+
+\subsubsection*{SSIS Solution}
+
+\begin{center}
+\begin{tikzpicture}[
+    node distance=0.6cm,
+    box/.style={rectangle, draw=secondary, fill=codebg, minimum width=3cm, minimum height=0.5cm, font=\scriptsize},
+    arrow/.style={-{Stealth}, thick, color=accent}
+]
+\node[box] (src) {OLE DB Source};
+\node[box, below=of src] (der1) {Derived Column 1};
+\node[box, below=of der1] (agg) {Aggregate};
+\node[box, below=of agg] (der2) {Derived Column 2};
+\node[box, below=of der2] (sort) {Sort};
+\node[box, below=of sort] (dest) {Flat File Destination};
+
+\draw[arrow] (src) -- node[right, font=\tiny]{product\_id, store\_sales, store\_cost, unit\_sales} (der1);
+\draw[arrow] (der1) -- node[right, font=\tiny]{+ profit} (agg);
+\draw[arrow] (agg) -- node[right, font=\tiny]{product\_id, sum\_profit, sum\_units} (der2);
+\draw[arrow] (der2) -- node[right, font=\tiny]{+ avg\_profit} (sort);
+\draw[arrow] (sort) -- node[right, font=\tiny]{DESC} (dest);
+\end{tikzpicture}
+\end{center}
+
+\textbf{1. OLE DB Source}:
+\begin{lstlisting}[language=SQL]
+SELECT product_id, store_sales, store_cost, unit_sales FROM sales_fact
+\end{lstlisting}
+
+\textbf{2. Derived Column 1}: profit of a single sale:
+\begin{lstlisting}
+profit = store_sales - store_cost
+\end{lstlisting}
+
+\textbf{3. Aggregate}:
+\begin{center}
+\scriptsize
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Input Column} & \textbf{Operation} & \textbf{Output Alias} \\
+\midrule
+product\_id & Group by & product\_id \\
+profit & Sum & sum\_profit \\
+unit\_sales & Sum & sum\_units \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{4. Derived Column 2}: average profit:
+\begin{lstlisting}
+avg_profit = sum_units != 0 ? sum_profit / sum_units : 0
+Type: DT_R8
+\end{lstlisting}
+
+\textbf{5. Sort}: avg\_profit DESC
+
+\textbf{6. Flat File}: output\_profit.csv (columns: product\_id, avg\_profit)
+
+\subsubsection{Travel Sales}
+\label{subsec:ex-travel-sales}
+
+\begin{theorybox}[frametitle={Exercise}]
+A sale is classified as ``travel sale'' if the store of the transaction is in a different city from the customer's residence. Produce a CSV with: the customer's full name, total sales, and the percentage of travel sales.
+\end{theorybox}
+
+\subsubsection*{SSIS Solution}
+
+\textbf{1. OLE DB Source}:
+\begin{lstlisting}[language=SQL]
+SELECT c.customer_id, c.fullname, c.city AS customer_city,
+       st.store_city, sf.store_sales
+FROM sales_fact sf
+JOIN customer c ON sf.customer_id = c.customer_id
+JOIN store st ON sf.store_id = st.store_id
+\end{lstlisting}
+
+\textbf{2. Derived Column 1}: travel flag and amount:
+\begin{lstlisting}
+is_travel = customer_city != store_city ? 1 : 0
+travel_sales = customer_city != store_city ? store_sales : 0
+\end{lstlisting}
+
+\textbf{3. Aggregate}:
+\begin{center}
+\scriptsize
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Input} & \textbf{Operation} & \textbf{Output Alias} \\
+\midrule
+customer\_id & Group by & customer\_id \\
+fullname & Group by & fullname \\
+store\_sales & Sum & total\_sales \\
+travel\_sales & Sum & travel\_sales \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{4. Derived Column 2}: percentage:
+\begin{lstlisting}
+pct_travel = total_sales > 0 ? (DT_R8)travel_sales / total_sales * 100 : 0
+\end{lstlisting}
+
+\textbf{5. Flat File}: fullname, total\_sales, pct\_travel
+
+\subsubsection{Weekend Purchase Frequency (FPW)}
+\label{subsec:ex-fpw}
+
+\begin{theorybox}[frametitle={Exercise}]
+For each customer and month, compute the weekend purchase frequency (FPW): the number of distinct Saturday or Sunday days on which the customer made at least one purchase. Output: customer name, month/year, FPW.
+\end{theorybox}
+
+\subsubsection*{Analysis}
+
+FPW = COUNT(DISTINCT weekend day with purchases). The difficulty is that the SSIS Aggregate does not support a COUNT DISTINCT under a condition. The fix is a double aggregation.
+
+\subsubsection*{SSIS Solution}
+
+\textbf{1. OLE DB Source}:
+\begin{lstlisting}[language=SQL]
+SELECT sf.customer_id, t.the_date, t.the_year, t.the_month, t.day_of_week
+FROM sales_fact sf
+JOIN time_by_day t ON sf.time_id = t.time_id
+\end{lstlisting}
+
+\textbf{2. Derived Column 1}:
+\begin{lstlisting}
+year_month = (DT_WSTR,7)(the_year) + "-" + RIGHT("0" + (DT_WSTR,2)(the_month), 2)
+is_weekend = day_of_week == 1 || day_of_week == 7 ? 1 : 0
+\end{lstlisting}
+
+\textbf{3. Conditional Split}: Output ``Weekend'' if \texttt{is\_weekend == 1}, discard the rest.
+
+\textbf{4. Aggregate 1}: removes duplicates (same customer, same day):
+\begin{center}
+\scriptsize
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Input} & \textbf{Operation} & \textbf{Output} \\
+\midrule
+customer\_id & Group by & customer\_id \\
+year\_month & Group by & year\_month \\
+the\_date & Group by & the\_date \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{5. Aggregate 2}: counts the distinct days per customer/month:
+\begin{center}
+\scriptsize
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Input} & \textbf{Operation} & \textbf{Output} \\
+\midrule
+customer\_id & Group by & customer\_id \\
+year\_month & Group by & year\_month \\
+the\_date & Count & FPW \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{6. Lookup}: adds fullname from the customer table
+
+\textbf{7. Flat File}: fullname, year\_month, FPW
+
+\subsubsection{Q5: SCD Handling, Store 7 Becomes Store 25}
+\label{subsec:ex-q5}
+
+\begin{theorybox}[frametitle={Exercise}]
+Store 7 (type ``Supermarket'') is refurbished and becomes store 25 (type ``Deluxe Supermarket''). How is this Slowly Changing Dimension handled with a Type 1 and a Type 2 approach?
+\end{theorybox}
+
+\subsubsection*{Type 1 Solution (Overwrite)}
+
+The record is updated and the history is lost:
+\begin{lstlisting}[language=SQL]
+-- Update the dimension
+UPDATE store
+SET store_id = 25, store_type = 'Deluxe Supermarket'
+WHERE store_id = 7;
+
+-- Update the fact table
+UPDATE sales_fact SET store_id = 25 WHERE store_id = 7;
+\end{lstlisting}
+
+\textbf{Consequence}: every historical sale now appears as made in the Deluxe Supermarket.
+
+\subsubsection*{Type 2 Solution (Add New Row)}
+
+The old record is closed and a new one is created, which preserves the history:
+\begin{lstlisting}[language=SQL]
+-- Schema with SCD Type 2
+CREATE TABLE store (
+    store_sk INT IDENTITY PRIMARY KEY,  -- Surrogate key
+    store_id INT,                        -- Business key
+    store_name VARCHAR(100),
+    store_type VARCHAR(50),
+    valid_from DATE,
+    valid_to DATE,
+    is_current BIT
+);
+
+-- Close the old record
+UPDATE store
+SET valid_to = GETDATE(), is_current = 0
+WHERE store_id = 7 AND is_current = 1;
+
+-- Create new record
+INSERT INTO store (store_id, store_name, store_type,
+                   valid_from, valid_to, is_current)
+SELECT 25, store_name, 'Deluxe Supermarket',
+       GETDATE(), '9999-12-31', 1
+FROM store WHERE store_id = 7;
+\end{lstlisting}
+
+\textbf{Query that accounts for the history}:
+\begin{lstlisting}[language=SQL]
+SELECT st.store_type, SUM(sf.store_sales) AS sales
+FROM sales_fact sf
+JOIN time_by_day t ON sf.time_id = t.time_id
+JOIN store st ON sf.store_sk = st.store_sk
+    AND t.the_date BETWEEN st.valid_from AND st.valid_to
+GROUP BY st.store_type;
+\end{lstlisting}
+
+\subsection{Date Dimension: A Worked Case Study}
+\label{sec:date-dimension-case-study}
+
+The date dimension is the most delicate one in a data warehouse. A wrong design breaks the navigability of the cube.
+
+\subsubsection{The Ambiguity Problem}
+\label{subsec:date-ambiguity}
+
+Consider the hierarchy \texttt{Year $\to$ Month $\to$ Day}. The member ``January'' looks identical across every year: SSAS cannot tell January 2023 from January 2024. This produces wrong aggregations during drill-down.
+
+\subsubsection{Solution: Composite Keys}
+\label{subsec:date-composite-keys}
+
+Each level needs a composite key that makes it unique:
+
+\begin{center}
+\small
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{Attribute} & \textbf{KeyColumn} & \textbf{NameColumn} & \textbf{Example} \\
+\midrule
+Year & year & year & 2024 \\
+Month & year\_month\_int & year\_month & ``2024-01'' \\
+Day & ID\_date & full\_date & ``2024-01-15'' \\
+Season & year, season & year\_season & ``2024-Winter'' \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsubsection{Population Script}
+\label{subsec:date-population}
+
+\begin{lstlisting}[language=SQL]
+DECLARE @StartDate DATE = '1950-01-01';
+DECLARE @EndDate DATE = '2030-12-31';
+
+WITH DateSequence AS (
+    SELECT @StartDate AS dt
+    UNION ALL
+    SELECT DATEADD(DAY, 1, dt) FROM DateSequence WHERE dt < @EndDate
+)
+INSERT INTO [date] (ID_date, full_date, [year], [month], [day],
+                    month_name, year_month, year_month_int,
+                    season, year_season, [quarter],
+                    day_of_week, is_weekend)
+SELECT
+    CONVERT(INT, FORMAT(dt, 'yyyyMMdd')),
+    dt,
+    YEAR(dt),
+    MONTH(dt),
+    DAY(dt),
+    DATENAME(MONTH, dt),
+    FORMAT(dt, 'yyyy-MM'),
+    YEAR(dt) * 100 + MONTH(dt),
+    CASE
+        WHEN MONTH(dt) IN (12,1,2) THEN 'Winter'
+        WHEN MONTH(dt) IN (3,4,5) THEN 'Spring'
+        WHEN MONTH(dt) IN (6,7,8) THEN 'Summer'
+        ELSE 'Autumn'
+    END,
+    CAST(YEAR(dt) AS VARCHAR(4)) + '-' +
+        CASE WHEN MONTH(dt) IN (12,1,2) THEN 'Winter'
+             WHEN MONTH(dt) IN (3,4,5) THEN 'Spring'
+             WHEN MONTH(dt) IN (6,7,8) THEN 'Summer'
+             ELSE 'Autumn' END,
+    DATEPART(QUARTER, dt),
+    DATEPART(WEEKDAY, dt),
+    CASE WHEN DATEPART(WEEKDAY, dt) IN (1,7) THEN 1 ELSE 0 END
+FROM DateSequence
+OPTION (MAXRECURSION 0);
+\end{lstlisting}
+
+\subsubsection{The Season Problem}
+\label{subsec:season-problem}
+
+Season does not sit linearly in the hierarchy: December 2024 belongs to ``Winter 2025''.
+
+\textbf{Recommended solution:} do not put Season inside the main hierarchy Year $\to$ Month $\to$ Day. Use Season as a separate attribute attached to Month, creating two hierarchies:
+\begin{itemize}
+    \item \textbf{Calendar:} Year $\to$ Month $\to$ Day
+    \item \textbf{Seasonal:} Year $\to$ Season (Month and Day excluded)
+\end{itemize}
+
+\subsubsection{Attribute Configuration in SSAS}
+\label{subsec:ssas-date-config}
+
+\begin{center}
+\small
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{Attribute} & \textbf{KeyColumn} & \textbf{NameColumn} & \textbf{OrderBy} \\
+\midrule
+Year & year & year & Key \\
+Month & year\_month\_int & year\_month & Key \\
+Day & ID\_date & full\_date & Key \\
+Season & year + season & year\_season & Key \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{SSIS Quick Reference}
+\label{sec:ssis-reference}
+
+For the ETL concepts see Section~\ref{sec:etl-phases}. This reference gives only the syntax and the operational patterns.
+
+\subsubsection{SSIS Expression Syntax}
+\label{subsec:ssis-expression-syntax}
+
+\textbf{Operators:}
+\begin{lstlisting}
++ - * / %              -- Arithmetic
+== != < > <= >=        -- Comparison
+&& || !                -- Logical (AND, OR, NOT)
+cond ? val1 : val2     -- Ternary
+\end{lstlisting}
+
+\textbf{String functions:}
+\begin{lstlisting}
+UPPER(s)  LOWER(s)  TRIM(s)  LEN(s)
+SUBSTRING(s, start, len)
+REPLACE(s, old, new)
+LEFT(s, n)  RIGHT(s, n)
+FINDSTRING(s, search, occurrence)
+\end{lstlisting}
+
+\textbf{Date functions:}
+\begin{lstlisting}
+GETDATE()
+YEAR(d)  MONTH(d)  DAY(d)
+DATEADD("dd", n, d)    -- Add n days
+DATEDIFF("mm", d1, d2) -- Difference in months
+\end{lstlisting}
+
+\textbf{Type conversions:}
+\begin{lstlisting}
+(DT_I4)expr            -- 32-bit integer
+(DT_I8)expr            -- 64-bit integer
+(DT_R8)expr            -- Double
+(DT_WSTR, len)expr     -- Unicode string
+(DT_DBDATE)expr        -- Date
+(DT_BOOL)expr          -- Boolean
+\end{lstlisting}
+
+\textbf{NULL handling:}
+\begin{lstlisting}
+ISNULL(col)                        -- TRUE if NULL
+ISNULL(col) ? "default" : col      -- Default pattern
+REPLACENULL(col, default_value)    -- Alternative
+\end{lstlisting}
+
+\subsubsection{Common SSIS Patterns}
+\label{subsec:ssis-common-patterns}
+
+\textbf{Computing statistics (mean, std dev):}
+\begin{lstlisting}
+-- 1. Derived Column: square
+squared = value * value
+
+-- 2. Aggregate (GROUP BY key):
+   count_n = COUNT(*)
+   sum_val = SUM(value)
+   sum_sq  = SUM(squared)
+
+-- 3. Derived Column: statistics
+mean = sum_val / count_n
+variance = (sum_sq / count_n) - (mean * mean)
+std_dev = variance > 0 ? SQRT(variance) : 0
+\end{lstlisting}
+
+\textbf{Threshold classification:}
+\begin{lstlisting}
+-- Conditional Split
+LOW:      value < threshold_low
+MEDIUM:   value >= threshold_low && value < threshold_high
+HIGH:     value >= threshold_high
+\end{lstlisting}
+
+\textbf{Manual pivot:}
+\begin{lstlisting}
+-- Derived Column before Aggregate
+is_cat_A = (category == "A") ? 1 : 0
+val_if_A = (category == "A") ? value : 0
+
+-- Aggregate
+count_A = SUM(is_cat_A)
+total_A = SUM(val_if_A)
+\end{lstlisting}

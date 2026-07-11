@@ -1,0 +1,321 @@
+
+\section{Data Access: Files}
+\label{part:file-access}
+
+Data access is the first step of any processing pipeline. Before transforming, analysing, or loading information into a data warehouse, the sources must be located and their format interpreted.
+
+\subsection{Locating Files}
+\label{sec:file-location}
+
+Location uniquely identifies a data resource within a storage system. The mechanisms differ according to whether the resource is local or remote.
+
+\subsubsection{Local File Systems}
+\label{subsec:local-fs}
+
+A local file system provides a logical abstraction over persistent mass storage. Its hierarchical structure organises resources into a tree of directories and files, with a root that marks the starting point of navigation.
+
+The \textbf{path} uniquely identifies a resource inside the file system. Its syntax varies across operating systems:
+
+\begin{examplebox}
+{\scriptsize
+\textbf{Windows:} \texttt{C:\textbackslash Users\textbackslash analyst\textbackslash data\textbackslash sales.csv}\\
+\textbf{Linux/macOS:} \texttt{/home/analyst/data/sales.csv}
+}
+\end{examplebox}
+
+At the physical level, the file system operates on disk partitions organised into blocks. The file-system driver supplies the logical abstraction, mapping high-level operations (open, read, write) onto block I/O operations. This separation lets applications ignore the details of the underlying hardware.
+
+\subsubsection{Distributed File Systems}
+\label{subsec:distributed-fs}
+
+A distributed file system extends the hierarchical view to resources that physically reside on remote machines. The user perceives a single directory tree, even though the data is spread across different servers. Examples include NFS (Network File System) in Unix environments and SMB/CIFS shares under Windows.
+
+Distributed file systems built for big data, such as HDFS (Hadoop Distributed File System), partition large files across many nodes of a cluster and provide fault tolerance through block replication.
+
+\subsubsection{Remote Access Protocols}
+\label{subsec:network-protocols}
+
+When a distributed file system is unavailable or impractical, remote files are reached through explicit network protocols. In this scenario a local copy is usually made before the data is processed.
+
+Remote resources are identified by a \textbf{URL} (Uniform Resource Locator):
+
+\begin{notebox}
+\textbf{URL syntax:}
+
+\texttt{scheme://user:password@host:port/path}
+
+The components are: \textit{scheme} (protocol), optional credentials, \textit{host} (server name or IP), \textit{port} (listening port), and \textit{path} (path to the resource).
+\end{notebox}
+
+The main file-transfer protocols are:
+
+\begin{itemize}
+    \item \textbf{HTTP/HTTPS}: the standard, stateless web protocol, used to reach resources through REST APIs or by direct download. HTTPS adds TLS encryption.
+    \item \textbf{FTP/SFTP}: protocols dedicated to file transfer. FTP operates in cleartext; SFTP (SSH File Transfer Protocol) encrypts the entire session.
+    \item \textbf{SCP} (Secure Copy): direct copy between remote hosts over an SSH channel:
+\begin{lstlisting}[language=bash, basicstyle=\ttfamily\scriptsize]
+scp data.csv user@server.example.com:/data/imports/
+\end{lstlisting}
+    \item \textbf{Cloud Storage API}: services such as Amazon S3, Azure Blob Storage, and Google Cloud Storage expose REST APIs for programmatic access to distributed object storage.
+\end{itemize}
+
+\subsection{Tabular Formats}
+\label{sec:tabular-formats}
+
+Tabular data organises information into a two-dimensional structure of rows (records, instances) and columns (attributes, fields).
+
+\subsubsection{CSV: Comma Separated Values}
+\label{subsec:csv-format}
+
+The \textbf{CSV} format stores each record on one line of text, with attribute values separated by a delimiter character (commonly a comma, semicolon, or tab).
+
+\begin{lstlisting}[language={}, basicstyle=\ttfamily\scriptsize]
+name,surname,age,occupation
+Mario,Bianchi,23,Student
+Luigi,Rossi,30,Engineer
+Anna,Verdi,50,Teacher
+\end{lstlisting}
+
+The format is simple and readable, but it carries ambiguities that require extra conventions:
+
+\begin{itemize}
+    \item \textbf{Quoting}: when a value contains the delimiter or special characters, it is wrapped in double quotes. For example, \texttt{"Rossi, Mario"} for a compound surname.
+    \item \textbf{Escaping}: a double quote inside a quoted field is written by doubling it: \texttt{"Detto ""il capo"""}.
+    \item \textbf{Missing values}: represented by an empty field, the string \texttt{null}, \texttt{NA}, \texttt{?}, or another documented convention.
+    \item \textbf{Header}: the first line may hold the column names; without a header, external metadata is required.
+\end{itemize}
+
+\begin{notebox}
+\textbf{Common variants.}
+TSV (Tab Separated Values) uses the tab as delimiter, avoiding conflicts with commas in the data. The semicolon delimiter is widespread in European locales, where the comma is the decimal separator.
+\end{notebox}
+
+\subsubsection{FLV: Fixed Length Values}
+\label{subsec:flv-format}
+
+The \textbf{FLV} (Fixed Length Values) format assigns a fixed number of characters to each column, regardless of the actual length of the value.
+
+\begin{lstlisting}[language={}, basicstyle=\ttfamily\scriptsize]
+Mario     Bianchi   23Student  
+Luigi     Rossi     30Engineer 
+Anna      Verdi     50Teacher  
+\end{lstlisting}
+
+This structure trades off against delimited formats:
+
+\begin{itemize}
+    \item \textit{Advantage}: direct access to any record without sequential scanning; the position of record $n$ is computable as $n \times \text{row\_length}$.
+    \item \textit{Disadvantage}: wasted space for short values (padded with spaces) and truncation of long ones.
+\end{itemize}
+
+FLV is still common in legacy systems, mainframes, and banking interfaces.
+
+\subsubsection{Metadata for Tabular Data}
+\label{subsec:tabular-metadata}
+
+\textbf{Metadata} describe the structure and properties of the data: table name, column names and types, integrity constraints. Metadata can be stored in several ways:
+
+\begin{itemize}
+    \item \textbf{Header in the file}: one or more initial lines hold the column names and optionally their types.
+    \item \textbf{Separate file}: a schema file (e.g.\ \texttt{.schema}, \texttt{.json}) accompanies the data file.
+    \item \textbf{Dedicated section}: self-describing formats integrate metadata and data in the same file.
+\end{itemize}
+
+
+\subsubsection{ARFF: Attribute-Relation File Format}
+\label{subsec:arff-format}
+
+The \textbf{ARFF} format, developed for the Weka data mining suite, integrates metadata and data in a single structured file. The header section defines the relation and its attributes; the data section holds the instances.
+
+\begin{lstlisting}[language={}, basicstyle=\ttfamily\scriptsize]
+@relation employees
+
+@attribute name string
+@attribute surname string
+@attribute age integer
+@attribute occupation {Student,Engineer,Teacher}
+
+@data
+Mario,Bianchi,23,Student
+Luigi,Rossi,?,Engineer
+Anna,Verdi,50,'PhD student'
+\end{lstlisting}
+
+Supported attribute types:
+\begin{itemize}
+    \item \texttt{numeric}, \texttt{real}, \texttt{integer}: numeric values
+    \item \texttt{string}: arbitrary text strings
+    \item \texttt{\{val1, val2, ...\}}: enumeration (nominal attribute)
+    \item \texttt{date "format"}: dates with a Java SimpleDateFormat pattern
+\end{itemize}
+
+Syntactic conventions: comments with \texttt{\%}, missing values with \texttt{?}, and single-quote quoting for strings that contain spaces or special characters.
+
+\subsection{JSON Format}
+\label{sec:json-format}
+
+\textbf{JSON} (JavaScript Object Notation) is a lightweight, readable, language-independent data-interchange format. Born in the JavaScript context, it is now the de facto standard for web APIs and configuration files.
+
+\subsubsection{Structure and Syntax}
+\label{subsec:json-structure}
+
+JSON supports two composite structures and four primitive types:
+
+\begin{itemize}
+    \item \textbf{Object}: an unordered collection of key-value pairs, enclosed in braces \texttt{\{ \}}.
+    \item \textbf{Array}: an ordered sequence of values, enclosed in square brackets \texttt{[ ]}.
+    \item \textbf{Primitives}: strings (in double quotes), numbers, booleans (\texttt{true}, \texttt{false}), and \texttt{null}.
+\end{itemize}
+
+\begin{lstlisting}[language={}, basicstyle=\ttfamily\scriptsize]
+{
+  "employees": [
+    {"name": "Mario", "surname": "Bianchi", "age": 23},
+    {"name": "Anna", "surname": "Verdi", "age": 50}
+  ],
+  "department": "Engineering",
+  "active": true
+}
+\end{lstlisting}
+
+\subsubsection{JSON for Tabular Data}
+\label{subsec:json-tabular}
+
+Tabular data is typically represented as an array of objects, where each object corresponds to a record:
+
+\begin{lstlisting}[language={}, basicstyle=\ttfamily\scriptsize]
+[
+  {"name": "Mario", "age": 23, "occupation": "Student"},
+  {"name": "Luigi", "age": 30, "occupation": "Engineer"},
+  {"name": "Anna", "age": 50, "occupation": "Teacher"}
+]
+\end{lstlisting}
+
+Unlike CSV, JSON is self-describing: the attribute names are explicit in every record. This introduces redundancy but removes ambiguity, and it allows records with different attributes (flexible schema).
+
+\begin{notebox}
+\textbf{JSON Lines (JSONL).}
+For large datasets, the JSON Lines format stores one JSON object per line, which eases streaming processing and incremental appends:
+\begin{lstlisting}[language={}, basicstyle=\ttfamily\tiny]
+{"name": "Mario", "age": 23}
+{"name": "Anna", "age": 50}
+\end{lstlisting}
+\end{notebox}
+
+\subsection{XML Format}
+\label{sec:xml-format}
+
+\textbf{XML} (eXtensible Markup Language) is a metalanguage for defining custom markup languages. Unlike HTML, which has a fixed set of tags, XML lets a designer define vocabularies specific to any application domain.
+
+The \textit{markup} consists of tags that annotate the data with their semantic meaning. XML solves the problem of exchanging data between heterogeneous applications: it gives a self-describing, extensible, and validatable format in which every element is marked with its own role.
+
+\subsubsection{Structure of an XML Document}
+\label{subsec:xml-structure}
+
+An XML document consists of an optional \textbf{prolog} and a hierarchy of nested elements.
+
+\begin{lstlisting}[language=XML, basicstyle=\ttfamily\scriptsize]
+<?xml version="1.0" encoding="UTF-8"?>
+<catalog>
+  <cd id="1">
+    <artist>Iron Maiden</artist>
+    <album>Killers</album>
+    <year>1981</year>
+    <tracks>
+      <track number="1">The Ides of March</track>
+      <track number="2">Wrathchild</track>
+    </tracks>
+  </cd>
+</catalog>
+\end{lstlisting}
+
+The \textbf{prolog} \texttt{<?xml ... ?>} declares the XML version (mandatory when the prolog is present) and the character encoding (UTF-8 by default).
+
+\textbf{Elements} are delimited by an opening tag \texttt{<name>} and a closing tag \texttt{</name>}. Empty elements use the shorthand syntax \texttt{<name />}. Every document has exactly one \textbf{root element} that contains all the others.
+
+\textbf{Attributes} specify properties of elements in the form \texttt{name="value"} inside the opening tag. The order of attributes is not significant.
+
+\subsubsection{Text and Special Characters}
+\label{subsec:xml-special-chars}
+
+Characters with a syntactic meaning in XML require escape sequences (entity references):
+
+{\scriptsize
+\begin{center}
+\begin{tabular}{ll}
+\texttt{\&lt;} $\rightarrow$ \texttt{<} & \texttt{\&gt;} $\rightarrow$ \texttt{>} \\
+\texttt{\&amp;} $\rightarrow$ \texttt{\&} & \texttt{\&quot;} $\rightarrow$ \texttt{"} \\
+\texttt{\&apos;} $\rightarrow$ \texttt{'} &
+\end{tabular}
+\end{center}
+}
+
+For blocks of text that contain many special characters, a \textbf{CDATA} section avoids escaping:
+
+\begin{lstlisting}[language=XML, basicstyle=\ttfamily\scriptsize]
+<script><![CDATA[
+  if (a < b && c > d) { process(); }
+]]></script>
+\end{lstlisting}
+
+\subsubsection{Tabular Data in XML}
+\label{subsec:xml-tabular}
+
+There are two main approaches to representing tabular data in XML.
+
+\textbf{Attribute style}: the values are attributes of the row element:
+\begin{lstlisting}[language=XML, basicstyle=\ttfamily\scriptsize]
+<employees>
+  <employee name="Mario" surname="Bianchi" age="23" />
+  <employee name="Anna" surname="Verdi" age="50" />
+</employees>
+\end{lstlisting}
+
+\textbf{Element style}: the values are nested elements:
+\begin{lstlisting}[language=XML, basicstyle=\ttfamily\scriptsize]
+<employees>
+  <employee>
+    <name>Mario</name>
+    <surname>Bianchi</surname>
+    <age>23</age>
+  </employee>
+</employees>
+\end{lstlisting}
+
+The attribute style is more compact; the element style handles complex, multiline, or markup-bearing values better. Schema metadata can be included in the document itself or in a separate XSD file.
+
+\subsubsection{XRFF: XML for Machine Learning}
+\label{subsec:xrff-format}
+
+The \textbf{XRFF} (eXtensible attribute-Relation File Format) is the XML version of ARFF, developed for Weka. Compared to textual ARFF, it offers greater expressiveness: it supports instance weights, an explicit marking of missing values, and additional data types.
+
+\begin{lstlisting}[language=XML, basicstyle=\ttfamily\scriptsize]
+<dataset name="employees">
+  <header>
+    <attributes>
+      <attribute name="name" type="string"/>
+      <attribute name="age" type="numeric"/>
+      <attribute name="role" type="nominal">
+        <labels>
+          <label>Junior</label>
+          <label>Senior</label>
+        </labels>
+      </attribute>
+    </attributes>
+  </header>
+  <body>
+    <instances>
+      <instance>
+        <value>Mario</value>
+        <value>23</value>
+        <value>Junior</value>
+      </instance>
+      <instance>
+        <value>Anna</value>
+        <value missing="yes"/>
+        <value>Senior</value>
+      </instance>
+    </instances>
+  </body>
+</dataset>
+\end{lstlisting}
