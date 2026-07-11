@@ -26,6 +26,8 @@ into the sections they belong to, next to the theory they exercise.
 > copyrighted material (which I will promptly remove on notification), contact me
 > at `sclfnc@proton.me`.
 
+This course is part of the [MSc Data Science lecture notes](https://github.com/sclfnc/unipi-ds-notes) collection (University of Pisa), one repository per course. Clone the whole set with `git clone --recursive`.
+
 ## Layout
 
 - `main.tex`: entry point, in the folder root; identical across the whole
